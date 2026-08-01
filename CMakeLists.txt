@@ -220,6 +220,11 @@ add_library(xp_atc_engine OBJECT
     src/atc/flows/pattern_flow.cpp
     src/atc/flows/crosscountry_flow.cpp
     src/backends/manager.cpp
+    # Sample-rate conversion for the STT input path. The capture layer is
+    # plugin-only (Core Audio / WASAPI), but the conversion itself is pure
+    # DSP -- it lives here so tests/test_pcm_resample.cpp can prove the
+    # anti-aliasing (issue #85).
+    src/audio/pcm_resample.cpp
     src/data/airport_vrps.cpp
     src/data/airspace_db.cpp
     src/data/openair_db.cpp

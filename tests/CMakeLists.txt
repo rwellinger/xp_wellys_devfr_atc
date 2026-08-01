@@ -60,6 +60,7 @@ add_executable(xp_wellys_vfr_atc_tests
     test_openai_common.cpp
     test_audit_logging.cpp
     test_model_manifest.cpp
+    test_pcm_resample.cpp
 )
 
 target_include_directories(xp_wellys_vfr_atc_tests PRIVATE

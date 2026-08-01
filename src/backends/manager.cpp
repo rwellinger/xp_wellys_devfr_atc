@@ -7,6 +7,8 @@
 
 #include "backends/manager.hpp"
 
+#include "audio/pcm_resample.hpp"
+#include "core/logging.hpp"
 #include "persistence/settings.hpp"
 
 #include <curl/curl.h>
@@ -96,41 +98,6 @@ template <class Fn> void spawn_worker(Fn &&fn) {
     g_active_workers.fetch_sub(1, std::memory_order_relaxed);
   });
   t.detach();
-}
-
-// 16-bit signed PCM → float [-1, 1]. If `src_rate_hz` is not 16 kHz,
-// drop in a naïve linear resampler — the plugin's audio_recorder
-// already produces 16 kHz so the resample path is dormant in practice
-// but keeps this dispatcher independent of upstream sample-rate
-// choices.
-std::vector<float> pcm16_to_float_16k(const std::vector<int16_t> &pcm16,
-                                      uint32_t src_rate_hz) {
-  if (pcm16.empty())
-    return {};
-  std::vector<float> out;
-  if (src_rate_hz == 0 || src_rate_hz == 16000) {
-    out.reserve(pcm16.size());
-    for (int16_t s : pcm16)
-      out.push_back(static_cast<float>(s) / 32768.0f);
-    return out;
-  }
-  // Linear resample to 16 kHz.
-  double ratio = static_cast<double>(src_rate_hz) / 16000.0;
-  size_t out_n = static_cast<size_t>(static_cast<double>(pcm16.size()) / ratio);
-  out.reserve(out_n);
-  for (size_t i = 0; i < out_n; ++i) {
-    double src_pos = static_cast<double>(i) * ratio;
-    auto idx = static_cast<size_t>(src_pos);
-    double frac = src_pos - static_cast<double>(idx);
-    if (idx + 1 >= pcm16.size()) {
-      out.push_back(static_cast<float>(pcm16.back()) / 32768.0f);
-      break;
-    }
-    float a = static_cast<float>(pcm16[idx]) / 32768.0f;
-    float b = static_cast<float>(pcm16[idx + 1]) / 32768.0f;
-    out.push_back(static_cast<float>(a + (b - a) * frac));
-  }
-  return out;
 }
 
 // Whisper performs better on transcripts when seeded with relevant
@@ -278,7 +245,17 @@ void transcribe_async(std::vector<int16_t> pcm16, uint32_t sample_rate_hz,
                 cb = std::move(callback)]() mutable {
     // Convert outside the call mutex so concurrent callers get the
     // most parallelism we can offer without serialising on whisper.
-    std::vector<float> pcm32 = pcm16_to_float_16k(pcm16, sample_rate_hz);
+    //
+    // Anything other than 16 kHz means the capture layer could not give
+    // us the target rate and pcm_resample has to band-limit in software.
+    // That is the degraded path (issue #85) -- say so in Log.txt rather
+    // than leaving it to be reconstructed from sample counts.
+    if (sample_rate_hz != 0 && sample_rate_hz != pcm_resample::kTargetRateHz)
+      logging::info("[STT] capture rate %u Hz != 16000 Hz, resampling in "
+                    "software (fallback path)",
+                    static_cast<unsigned>(sample_rate_hz));
+    std::vector<float> pcm32 =
+        pcm_resample::to_float_16k(pcm16, sample_rate_hz);
 
     std::string transcript;
     {

@@ -23,6 +23,7 @@
 #include <XPLMUtilities.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include <vector>
@@ -144,6 +145,61 @@ static void log_default_input_device() {
   }
 }
 
+// Configure the client-side format on the input bus at `rate` and bring
+// the unit up. Success means the AUHAL accepted the format, reported it
+// back unchanged, AND initialized -- a set that silently lands on a
+// different rate is a failure here, otherwise we would believe we had
+// 16 kHz while the callback delivers something else.
+//
+// On failure the unit is left uninitialized so the caller can retry with
+// another rate. `out_status` carries the OSStatus for logging.
+static bool activate_client_format(double rate, OSStatus *out_status) {
+  AudioStreamBasicDescription format{};
+  format.mSampleRate = rate;
+  format.mFormatID = kAudioFormatLinearPCM;
+  format.mFormatFlags =
+      kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked;
+  format.mBytesPerPacket = sizeof(int16_t);
+  format.mFramesPerPacket = 1;
+  format.mBytesPerFrame = sizeof(int16_t);
+  format.mChannelsPerFrame = kNumChannels;
+  format.mBitsPerChannel = kBitsPerSample;
+
+  OSStatus status =
+      AudioUnitSetProperty(audio_unit_, kAudioUnitProperty_StreamFormat,
+                           kAudioUnitScope_Output, 1, &format, sizeof(format));
+  *out_status = status;
+  if (status != noErr)
+    return false;
+
+  // HALOutput may accept the call but keep its own rate.
+  AudioStreamBasicDescription actual_fmt{};
+  UInt32 fmt_size = sizeof(actual_fmt);
+  status =
+      AudioUnitGetProperty(audio_unit_, kAudioUnitProperty_StreamFormat,
+                           kAudioUnitScope_Output, 1, &actual_fmt, &fmt_size);
+  *out_status = status;
+  if (status != noErr)
+    return false;
+
+  const auto got = static_cast<unsigned>(std::lround(actual_fmt.mSampleRate));
+  if (got != static_cast<unsigned>(std::lround(rate))) {
+    *out_status = kAudioUnitErr_FormatNotSupported;
+    return false;
+  }
+
+  status = AudioUnitInitialize(audio_unit_);
+  *out_status = status;
+  if (status != noErr) {
+    // Back to the uninitialized state; the format is only settable there.
+    AudioUnitUninitialize(audio_unit_);
+    return false;
+  }
+
+  actual_sample_rate_ = got;
+  return true;
+}
+
 void init() {
   if (!mic_permission::check_and_request()) {
     XPLMDebugString(
@@ -230,52 +286,8 @@ void init() {
     XPLMDebugString(log);
   }
 
-  // Use the device's native sample rate to avoid AudioUnit conversion errors
-  // (e.g. -10863 when converting 24kHz AirPods → 16kHz).
-  // Only convert to int16 PCM; Whisper accepts any sample rate.
   double device_rate =
       (hw_fmt.mSampleRate > 0) ? hw_fmt.mSampleRate : kDesiredSampleRate;
-
-  AudioStreamBasicDescription format{};
-  format.mSampleRate = device_rate;
-  format.mFormatID = kAudioFormatLinearPCM;
-  format.mFormatFlags =
-      kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked;
-  format.mBytesPerPacket = sizeof(int16_t);
-  format.mFramesPerPacket = 1;
-  format.mBytesPerFrame = sizeof(int16_t);
-  format.mChannelsPerFrame = kNumChannels;
-  format.mBitsPerChannel = kBitsPerSample;
-
-  status =
-      AudioUnitSetProperty(audio_unit_, kAudioUnitProperty_StreamFormat,
-                           kAudioUnitScope_Output, 1, &format, sizeof(format));
-  if (status != noErr) {
-    XPLMDebugString(
-        "[xp_wellys_vfr_atc] Error: failed to set audio format\n");
-    AudioComponentInstanceDispose(audio_unit_);
-    audio_unit_ = nullptr;
-    return;
-  }
-
-  // Read back actual format — HALOutput may not do sample rate conversion
-  AudioStreamBasicDescription actual_fmt{};
-  UInt32 fmt_size = sizeof(actual_fmt);
-  status =
-      AudioUnitGetProperty(audio_unit_, kAudioUnitProperty_StreamFormat,
-                           kAudioUnitScope_Output, 1, &actual_fmt, &fmt_size);
-  if (status == noErr) {
-    actual_sample_rate_ = static_cast<unsigned>(actual_fmt.mSampleRate);
-    char log[192];
-    std::snprintf(
-        log, sizeof(log),
-        "[xp_wellys_vfr_atc] Audio format: device %.0f Hz, client %u Hz "
-        "(%u ch, %u bps)\n",
-        device_rate, actual_sample_rate_,
-        static_cast<unsigned>(actual_fmt.mChannelsPerFrame),
-        static_cast<unsigned>(actual_fmt.mBitsPerChannel));
-    XPLMDebugString(log);
-  }
 
   // Set render callback on input bus
   AURenderCallbackStruct callback{};
@@ -293,13 +305,50 @@ void init() {
     return;
   }
 
-  status = AudioUnitInitialize(audio_unit_);
-  if (status != noErr) {
-    XPLMDebugString(
-        "[xp_wellys_vfr_atc] Error: failed to initialize AudioUnit\n");
-    AudioComponentInstanceDispose(audio_unit_);
-    audio_unit_ = nullptr;
-    return;
+  // Ask Core Audio for 16 kHz directly; fall back to the device's native
+  // rate only if it refuses.
+  //
+  // 16 kHz first, because the AUHAL's own converter band-limits properly.
+  // Adopting the device rate instead pushes the conversion onto
+  // pcm_resample, which is the software fallback -- correct, but extra
+  // work we do not need to do. (Until issue #85 this was the *only* macOS
+  // path, and back then the software resampler was an unfiltered linear
+  // decimation that aliased everything above 8 kHz down into the speech
+  // band.)
+  //
+  // The fallback stays because some devices genuinely reject the
+  // conversion: 24 kHz Bluetooth headsets (AirPods) have been observed to
+  // fail with -10863 here, and a dead microphone is far worse than a
+  // resample. Do not "simplify" this to a hard 16 kHz set.
+  if (!activate_client_format(kDesiredSampleRate, &status)) {
+    char log[224];
+    std::snprintf(log, sizeof(log),
+                  "[xp_wellys_vfr_atc] 16 kHz client format rejected "
+                  "(err %d), falling back to device rate %.0f Hz - STT "
+                  "quality will be reduced\n",
+                  static_cast<int>(status), device_rate);
+    XPLMDebugString(log);
+
+    if (!activate_client_format(device_rate, &status)) {
+      std::snprintf(log, sizeof(log),
+                    "[xp_wellys_vfr_atc] Error: failed to configure audio "
+                    "format at device rate %.0f Hz (err %d)\n",
+                    device_rate, static_cast<int>(status));
+      XPLMDebugString(log);
+      AudioComponentInstanceDispose(audio_unit_);
+      audio_unit_ = nullptr;
+      return;
+    }
+  }
+
+  {
+    char log[192];
+    std::snprintf(log, sizeof(log),
+                  "[xp_wellys_vfr_atc] Audio format: device %.0f Hz, "
+                  "client %u Hz (%u ch, %u bps)\n",
+                  device_rate, actual_sample_rate_, kNumChannels,
+                  kBitsPerSample);
+    XPLMDebugString(log);
   }
 
   initialized_ = true;
