@@ -34,7 +34,7 @@ CATCH2_VERSION := 3.15.1
 # plus the generated skunkcrafts_updater_*.txt control files.
 SKUNK_DIR := build/skunkcrafts
 
-.PHONY: all help setup setup-cloud build ci-fast ci-remote win-artifact win-zip install clean distclean format lint sanitize release release-build skunkcrafts cleanup-tags cleanup-branches cleanup-runs repl run-repl test test-unit test-scenarios
+.PHONY: all help setup setup-cloud build ci-fast ci-remote win-artifact win-zip install clean distclean format lint sanitize release release-build skunkcrafts verify-install cleanup-tags cleanup-branches cleanup-runs repl run-repl test test-unit test-scenarios
 
 .DEFAULT_GOAL := help
 
@@ -504,6 +504,22 @@ release:
 	@if [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
 	    echo "Untracked files present. Commit or clean up first."; exit 1; \
 	fi
+	@# The tag is what CI builds, and it is cut from HEAD. Releasing from a
+	@# feature branch or from a main that is behind origin therefore ships an
+	@# older tree than you think — the artifacts are consistent, just not the
+	@# code you expected. Both are cheap to rule out, so rule them out.
+	@BR="$$(git rev-parse --abbrev-ref HEAD)"; \
+	if [ "$$BR" != "main" ]; then \
+	    echo "On branch '$$BR', not main. Releases are cut from main."; exit 1; \
+	fi
+	@git fetch -q origin main
+	@if [ -n "$$(git rev-list HEAD..origin/main)" ]; then \
+	    echo "main is behind origin/main by $$(git rev-list --count HEAD..origin/main) commit(s)."; \
+	    echo "Run 'git pull' first — otherwise the tag would ship an older tree."; exit 1; \
+	fi
+	@if git rev-parse -q --verify "refs/tags/v$(VERSION)" >/dev/null; then \
+	    echo "Tag v$(VERSION) already exists locally."; exit 1; \
+	fi
 	@echo "$(VERSION)" > VERSION.txt
 	@git add VERSION.txt
 	@git commit -m "release $(VERSION)"
@@ -546,6 +562,16 @@ skunkcrafts:
 	python3 tools/skunkcrafts/generate.py --tree "$(SKUNK_DIR)" --version "$$VER"; \
 	echo "Staged release tree at $(SKUNK_DIR)/ (version $$VER)."; \
 	echo "Publish its contents to the 'release' branch / your update host."
+
+# ── Verify an installed tree against the published update ─────────────────────
+# Answers "did the update actually land?" by CRC32-comparing every whitelisted
+# file against the control files on the update host. The updater's UI shows the
+# version from the cfg, which it can record even when a file replacement failed
+# (a mapped .xpl while X-Plane is running is the classic case) — so the UI and
+# the plugin's own version can disagree with nothing flagging it.
+# TREE defaults to the local install; pass TREE=... for another one.
+verify-install:
+	@python3 tools/skunkcrafts/verify_install.py --tree "$(if $(TREE),$(TREE),$(PLUGIN_DIR))"
 
 # ── Cleanup Tags ──────────────────────────────────────────────────────────────
 cleanup-tags:
