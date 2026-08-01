@@ -73,10 +73,28 @@ cuBLAS/cuBLASLt mehrere hundert MB) sind für ein SkunkCrafts-Updater-Release
 untragbar. Vulkan braucht **keine** zusätzliche Runtime-DLL — `vulkan-1.dll`
 kommt vom Grafiktreiber, und X-Plane 12 rendert auf Windows ohnehin über
 Vulkan. Kosten: grob 10–30 % weniger Durchsatz als CUDA, und die Modelle teilen
-sich den VRAM mit X-Planes Renderer. Zwei Delay-Loads schützen den
-Cloud-Nutzer: `/DELAYLOAD:piper.dll` (Piper/onnxruntime erst bei lokaler TTS)
-und `/DELAYLOAD:vulkan-1.dll` (ohne das würde ein fehlender Loader das Laden
-der `.xpl` komplett verhindern — auch für Nutzer, die nie ggml anfassen).
+sich den VRAM mit X-Planes Renderer.
+
+**Zwei Windows-Load-Time-Fallen — beide tragend, nicht "vereinfachen":**
+
+1. `/DELAYLOAD:piper.dll` + `/DELAYLOAD:vulkan-1.dll`. Cloud-Nutzer mappen
+   Piper/onnxruntime damit nie. `piper.dll` stattdessen als Load-Time-Import zu
+   linken wurde probiert und ist **schlechter**: X-Plane verweigert dann das
+   ganze Plugin (`Error Code = 1114`), der Cloud-Modus geht mit verloren.
+2. Der Delay-Load-Helper löst DLLs über den **Prozess**-Suchpfad auf, der
+   `win_x64/` NICHT enthält (das gilt nur für Load-Time-Imports der `.xpl`).
+   Deshalb lädt `loader.cpp::preload_piper_dll()` die DLL vorab per
+   `LoadLibraryExW` + `LOAD_WITH_ALTERED_SEARCH_PATH` mit absolutem Pfad, den
+   es aus dem eigenen Modul-Handle ableitet (`GetModuleFileNameW`) — nicht aus
+   `model_paths::plugin_root()`, das gemischte Separatoren liefert. Ohne den
+   Preload: `0xC06D007E` beim ersten `piper_create`.
+
+Dazu ein **Patch am Bundle** (`xp_wellys_libs` ≥ 0.4.2,
+`patches/piper-lazy-ort-env.patch`): libpiper deklariert `Ort::Env` auf
+Namespace-Ebene; dessen Konstruktor läuft beim Mappen der DLL unter dem
+Windows-Loader-Lock und crasht dort (`0xC0000005`). Der Patch macht ihn zum
+function-local static. Beide Fehler traten **gestapelt** auf — jeder Fix
+änderte nur den Fehlercode, was wie ein Fehlschlag aussah.
 
 Der `backend_mode` ist eine **Laufzeit**-Einstellung; dasselbe Binary bedient
 Local, OpenAI und Mistral. Gebaut mit MSVC (Ninja) via CMake auf

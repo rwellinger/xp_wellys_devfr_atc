@@ -3,7 +3,8 @@
 ![Welly's VFR ATC panel with ATIS broadcast at LSZB Bern-Belp](images/atc-atis-example.jpg)
 
 > **Talk to the tower via push-to-talk — AI-powered VFR radio in German or
-> English for X-Plane 12, running locally on your Mac or through the cloud.**
+> English for X-Plane 12, running locally on your machine or through the
+> cloud.**
 
 Welly's VFR ATC turns your VFR flights in X-Plane 12 into a real radio
 conversation: you press the push-to-talk key, speak your call into the
@@ -67,30 +68,36 @@ even to pilot mistakes.
   synthesis, plus automatic **ATIS broadcasts** from live weather and
   **traffic advisories** about surrounding aircraft.
 - **💻 Local AI & ☁️ Cloud AI** — choose your mode at runtime:
-  - **Local** (Apple Silicon) — runs **100% offline** after a one-time model
-    download. No subscription, no API key, no constant internet.
-  - **OpenAI Cloud** (any Mac) — with your own API key. English voices only,
-    so German is spoken with a US accent.
-  - **Mistral Cloud** (any Mac) — with your own API key. Multilingual, but
-    Voxtral ships **no German preset voice** (US/GB English + French only),
-    so with the default voices German still carries an English accent.
+  - **Local** (Apple Silicon; **Windows x64 from v0.8**) — runs **100%
+    offline** after a one-time model download. No subscription, no API key, no
+    constant internet. GPU-accelerated via **Metal** on Apple Silicon and
+    **Vulkan** on Windows.
+  - **OpenAI Cloud** (any Mac, any Windows PC) — with your own API key. English
+    voices only, so German is spoken with a US accent.
+  - **Mistral Cloud** (any Mac, any Windows PC) — with your own API key.
+    Multilingual, but Voxtral ships **no German preset voice** (US/GB English +
+    French only), so with the default voices German still carries an English
+    accent.
 
   > **For accurate German, use Local mode** (Piper `de_DE-thorsten`, a native
   > German voice). Both cloud providers speak German with an accent — see
   > issue #63.
-- **🪟 Windows (all three backends, fully supported)** — X-Plane 12 on Windows
-  is included (`win_x64/xp_wellys_vfr_atc.xpl`). The cloud modes (OpenAI **or**
-  Mistral, API key in the Windows Credential Manager) are **verified end to end
-  on real Windows 11 hardware** (Shadow cloud PC, NVIDIA GPU): a complete VFR
-  round trip out of **Friedrichshafen (EDNY)** — plugin loading,
-  microphone/PTT, the full STT→ATC→TTS pipeline and the Credential Manager all
-  work flawlessly. **Local mode now builds for Windows too**, with whisper +
-  llama on the **Vulkan** GPU backend (never CUDA — no redist DLLs;
-  `vulkan-1.dll` comes with the graphics driver) and the accent-free German
-  Piper `de_DE-thorsten` voice. Expect roughly 10–30 % less throughput than
-  CUDA on the same card, and note that the models share VRAM with X-Plane's own
-  Vulkan renderer. The artifact ships `piper.dll` + `onnxruntime.dll` alongside
-  the `.xpl` (no longer DLL-free); the models download in-sim.
+- **🪟 Windows — all three backends** — X-Plane 12 on Windows is fully
+  supported (`win_x64/xp_wellys_vfr_atc.xpl`). The **cloud modes** are verified
+  end to end on real Windows 11 hardware (Shadow cloud PC, NVIDIA GPU): a
+  complete VFR round trip out of **Friedrichshafen (EDNY)** — plugin loading,
+  microphone/PTT, the full STT→ATC→TTS pipeline and the API key in the Windows
+  Credential Manager. **Local mode runs on Windows too** (**from v0.8**):
+  whisper + llama on the **Vulkan** GPU backend and the accent-free German
+  Piper `de_DE-thorsten` voice, with response times comparable to Apple
+  Silicon.
+
+  Vulkan rather than CUDA on purpose — no redistributable DLLs to ship,
+  `vulkan-1.dll` comes with the graphics driver, and it covers AMD/Intel GPUs
+  as well. The trade is roughly 10–30 % less throughput than CUDA on the same
+  card; note also that the models share VRAM with X-Plane's own Vulkan
+  renderer. The artifact ships `piper.dll` + `onnxruntime.dll` alongside the
+  `.xpl` (it is not DLL-free); the models download in-sim.
 
 ## A typical VFR flight, end to end
 
@@ -139,10 +146,10 @@ from BZF holders are expressly welcome.
 - **No local mode on Intel Macs** — they can use the plugin, but only in cloud
   mode (OpenAI or Mistral, API key required). Local mode runs on Apple Silicon
   (Metal) and Windows x64 (Vulkan).
-- **Windows local mode is new and less proven** — it builds and links in CI,
-  but has far fewer flight hours than the macOS path, and Vulkan compute is not
-  guaranteed on virtualised GPUs (some cloud-PC vGPU profiles). Cloud mode
-  remains the verified Windows configuration.
+- **Windows local mode is younger than the macOS one** — it works, but has far
+  fewer flight hours behind it. Vulkan compute is also not guaranteed on
+  virtualised GPUs (some cloud-PC vGPU profiles); where it is unavailable, ggml
+  falls back to CPU rather than failing.
 - **Not modeled yet** — wake-turbulence separation, freely selectable taxi
   routes (currently always "via Alpha"), large hub airports (LSZH, LSGG …)
   with a delivery workflow, and a virtual co-pilot / checklist reader.

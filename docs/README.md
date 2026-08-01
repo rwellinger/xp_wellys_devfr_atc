@@ -47,14 +47,14 @@ Mistral) are typically slower: 2–3 s warm, dominated by API latency.
 ## Features
 
 - **Push-to-talk** — via X-Plane command binding (keyboard or joystick)
-- **Three-backend inference** — pick **Local** (Apple Silicon only),
-  **OpenAI Cloud** or **Mistral Cloud** (both on any Mac, your own API
-  key) in the settings tab. Switch at runtime, no plugin restart. Every
-  inference call is tagged in X-Plane's `Log.txt` with `[STT-LOCAL]` /
-  `[STT-OPENAI]` / `[STT-MISTRAL]` (and correspondingly for LM/TTS), so
-  you can trace which side served each request.
+- **Three-backend inference** — pick **Local** (Apple Silicon or Windows
+  x64), **OpenAI Cloud** or **Mistral Cloud** (both on any Mac or Windows
+  PC, your own API key) in the settings tab. Switch at runtime, no plugin
+  restart. Every inference call is tagged in X-Plane's `Log.txt` with
+  `[STT-LOCAL]` / `[STT-OPENAI]` / `[STT-MISTRAL]` (and correspondingly
+  for LM/TTS), so you can trace which side served each request.
 - **Local speech-to-text** — `whisper.cpp` `small-q5_1` (multilingual,
-  German), Metal-accelerated
+  German), GPU-accelerated (Metal on Apple Silicon, Vulkan on Windows)
 - **Local LLM** — `llama.cpp` with Llama 3.2 3B Instruct (Q4_K_M),
   Metal-accelerated; used for intent disambiguation when the rule-based
   parser is unsure. The repair output is digit-validated to suppress
@@ -133,28 +133,35 @@ Mistral) are typically slower: 2–3 s warm, dominated by API latency.
 
 On **macOS** the plugin ships as a **Universal Binary** — one `.xpl`, two
 slices. X-Plane automatically loads the matching one. For **Windows**
-there is a separate, cloud-only build (`win_x64/xp_wellys_vfr_atc.xpl`).
+there is a separate build (`win_x64/xp_wellys_vfr_atc.xpl`).
 
 | Platform | Loaded slice / build | Available backends |
 |---|---|---|
-| macOS · Apple Silicon (M1 / M2 / M3 / M4) | `mac_x64` (arm64) | **Local**, **OpenAI Cloud** *or* **Mistral Cloud** |
+| macOS · Apple Silicon (M1 / M2 / M3 / M4) | `mac_x64` (arm64) | **Local** (Metal), **OpenAI Cloud** *or* **Mistral Cloud** |
 | macOS · Intel (x86_64) | `mac_x64` (x86_64) | **Cloud only** — **OpenAI** or **Mistral** (local inference needs Metal + Apple Silicon) |
-| Windows 11 (x64) | `win_x64` | **Cloud only** — **OpenAI** or **Mistral** (no local inference; no Metal / Apple Silicon) |
+| Windows 11 (x64) | `win_x64` | **Local** (Vulkan), **OpenAI Cloud** *or* **Mistral Cloud** |
 
-**Windows status:** The Windows build is **fully supported and verified
-end-to-end on real hardware** — a complete VFR round trip out of
+**Windows status:** Fully supported. The **cloud modes** are verified
+end-to-end on real hardware — a complete VFR round trip out of
 **Friedrichshafen (EDNY)** on a Shadow cloud PC (Windows 11, NVIDIA GPU):
 plugin loading, microphone capture (WASAPI via miniaudio) + PTT, the full
 STT→ATC→TTS pipeline and the API key in the Windows Credential Manager all
-work flawlessly. Windows is functionally identical to the Intel
-`x86_64` slice (cloud-only, OpenAI **or** Mistral over libcurl); local
-offline AI is **not** available on Windows.
+work flawlessly. **Local mode also runs on Windows**, with whisper + llama
+on the **Vulkan** ggml backend and the German Piper `de_DE-thorsten` voice,
+at response times comparable to Apple Silicon.
+
+Vulkan rather than CUDA is a deliberate choice: no redistributable DLLs
+have to ship (`vulkan-1.dll` comes with the graphics driver, and X-Plane 12
+renders through Vulkan on Windows anyway), and it covers AMD and Intel GPUs
+too. The cost is roughly 10–30 % less throughput than CUDA on the same card.
+Where no Vulkan compute device is available — some virtualised cloud-PC
+GPUs — ggml falls back to its CPU backend rather than failing.
 
 | Resource | Local mode | OpenAI / Mistral cloud mode |
 |---|---|---|
 | RAM | 32 GB recommended (X-Plane 12 + ~3 GB headroom for the inference stack) | 16 GB (no model in RAM — calls are stateless HTTP requests) |
 | Disk | ~2.5 GB free for the models | ~50 MB for the plugin bundle (no models loaded) |
-| GPU | any Metal-capable GPU on the same Apple Silicon chip | not used |
+| GPU | Apple Silicon: any Metal-capable GPU on the same chip. Windows: a Vulkan-capable GPU — note the models share VRAM with X-Plane's renderer | not used |
 | Network | not used at runtime (one-time model download from HuggingFace) | required — every PTT release triggers HTTPS calls to `api.openai.com` or `api.mistral.ai` |
 
 Both cloud modes cost money per request (STT + LM + TTS APIs). Mistral is
@@ -168,7 +175,7 @@ price parity. The latency of both clouds is typically 2–3 s warm vs.
 | Item | Requirement |
 |---|---|
 | macOS | **13.3 or newer** (onnxruntime 1.22.0 requires this on the arm64 slice; the x86_64 slice inherits the same deployment target so the lipo'd binary stays consistent) |
-| Windows | **Windows 11 (x64)**, verified. Cloud-only — OpenAI or Mistral only; the API key lives in the Windows Credential Manager. The artifact is a pure drop-in folder with no extra DLLs (libcurl static, Schannel TLS). |
+| Windows | **Windows 11 (x64)**, verified. All three backends; the cloud API key lives in the Windows Credential Manager. Local mode needs a Vulkan-capable GPU for acceleration (falls back to CPU otherwise). The artifact carries `piper.dll` + `onnxruntime.dll` next to the `.xpl` — libcurl and whisper/llama/ggml are linked statically. |
 | X-Plane | X-Plane 12 (12.0 or newer) |
 | OpenAI / Mistral account | Only if you want to use a cloud mode — needs an API key with billing enabled at the respective provider. The Local mode has no cloud dependency. |
 | To build from source | CMake 3.26+, Homebrew LLVM (`brew install llvm`), Xcode Command Line Tools |
@@ -177,7 +184,7 @@ price parity. The latency of both clouds is typically 2–3 s warm vs.
 
 1. Download `xp_wellys_vfr_atc-vX.Y.Z.zip` from the GitHub releases page.
    The macOS `.xpl` inside is a Universal Binary for arm64 and x86_64; the
-   Windows `.xpl` is in the `win_x64/` folder (cloud-only).
+   Windows `.xpl` is in the `win_x64/` folder.
 2. Unzip into `X-Plane 12/Resources/plugins/`. Result:
    ```
    X-Plane 12/Resources/plugins/xp_wellys_vfr_atc/
@@ -187,9 +194,12 @@ price parity. The latency of both clouds is typically 2–3 s warm vs.
      │     ├── libonnxruntime.1.22.0.dylib
      │     └── libonnxruntime.dylib
      ├── win_x64/
-     │     └── xp_wellys_vfr_atc.xpl       (Windows x64, cloud-only, no extra DLLs)
+     │     ├── xp_wellys_vfr_atc.xpl       (Windows x64)
+     │     ├── piper.dll
+     │     ├── onnxruntime.dll
+     │     └── onnxruntime_providers_shared.dll
      ├── Resources/
-     │     └── espeak-ng-data/   (~19 MB, used by the arm64 slice only)
+     │     └── espeak-ng-data/   (~19 MB, used by local TTS on both platforms)
      └── data/
            └── (ATC profile bundle, prompt templates, VRP database, etc.)
    ```
@@ -199,11 +209,11 @@ price parity. The latency of both clouds is typically 2–3 s warm vs.
    on Windows.
 3. Start X-Plane. Open the plugin window via *Plugins → Welly's ATC*.
 4. **Pick your backend** in the **Settings** tab:
-   - **Local** (Apple Silicon, default): the **Models** tab shows the rows
-     in red. Click **Download all missing** — the plugin downloads ~2.0 GB
-     from HuggingFace over HTTPS. Resumable; cancelable; SHA256-verified
-     after each file. Once all rows show **Ready** (green), the
-     PTT-disabled banner in the Status tab disappears.
+   - **Local** (Apple Silicon and Windows x64, default): the **Models** tab
+     shows the rows in red. Click **Download all missing** — the plugin
+     downloads ~2.0 GB from HuggingFace over HTTPS. Resumable; cancelable;
+     SHA256-verified after each file. Once all rows show **Ready** (green),
+     the PTT-disabled banner in the Status tab disappears.
    - **OpenAI Cloud** (any Mac **and Windows**): paste your OpenAI API key
      into the **OpenAI API Key** field in the settings (use the `[Paste]`
      button — Cmd+V is unreliable in X-Plane's ImGui context). Click
@@ -217,9 +227,9 @@ price parity. The latency of both clouds is typically 2–3 s warm vs.
      Credential Manager), so the OpenAI key (if present) stays untouched
      and you can switch providers without re-pasting. PTT is active
      immediately.
-   - **Windows** has no **Local** mode (no Apple Silicon / no Metal) — the
-     Windows build starts straight into one of the two cloud modes; the
-     **Models** tab stays inert.
+   - **Windows Local mode** is available **from v0.8**. Earlier Windows
+     builds were cloud-only and silently rewrote `backend_mode: local` to
+     `openai` at startup.
 5. Fly. The banner in the Status tab shows the active mode, and `Log.txt`
    carries a single-line `BACKEND MODE: ...` banner on every load, so you
    can prove after the fact which side served the session.
@@ -347,16 +357,34 @@ whisper / llama dependency whatsoever; it links only against libcurl + the
 system frameworks (Security, AudioToolbox, etc.) and the cloud clients.
 
 **Windows build.** The `win_x64/xp_wellys_vfr_atc.xpl` is built with **MSVC
-via CMake on `windows-latest` in CI** (not locally on the Mac). It is
-cloud-only (`XPWELLYS_USE_LOCAL_INFERENCE=OFF`, no whisper.cpp/llama.cpp/
-Piper/onnxruntime/Metal) and functionally identical to the Intel
-`x86_64` slice: OpenAI + Mistral over libcurl (static from vcpkg,
-`x64-windows-static`, Schannel TLS), so the artifact carries **zero**
-extra DLLs — a pure drop-in folder. The mic capture uses **miniaudio**
-(WASAPI) instead of Core Audio; the API key lives in the Windows
-Credential Manager instead of the Keychain. Verified end-to-end on Windows
-11 (Shadow cloud PC, NVIDIA GPU) with a VFR round trip out of
-Friedrichshafen (EDNY).
+via CMake on `windows-latest` in CI** — there is no local Windows build path.
+Since v0.8 it carries the **full local stack**
+(`XPWELLYS_USE_LOCAL_INFERENCE=ON`): whisper + llama + ggml as static archives
+with the **Vulkan** GPU backend, plus Piper for TTS. OpenAI and Mistral come
+over libcurl (static from vcpkg, `x64-windows-static`, Schannel TLS).
+
+Platform specifics: mic capture uses **miniaudio** (WASAPI) instead of Core
+Audio, and the API key lives in the Windows Credential Manager instead of the
+Keychain. The artifact ships `piper.dll` + `onnxruntime.dll`
+(+ `onnxruntime_providers_shared.dll`) next to the `.xpl` — Vulkan itself adds
+no DLL, since `vulkan-1.dll` comes from the graphics driver.
+
+Two Windows-only load-time details, both load-bearing — see the comments in
+`CMakeLists.txt` and `loader.cpp` before touching either:
+
+- `piper.dll` and `vulkan-1.dll` are **delay-loaded**, so users who never
+  reach local TTS or local inference do not map them. Making `piper.dll` a
+  load-time import instead was tried and is worse: X-Plane then refuses the
+  plugin outright and cloud mode is lost with it.
+- Because the delay-load helper resolves DLLs against the **process** search
+  path — which excludes the plugin's `win_x64/` — `loader.cpp` preloads
+  `piper.dll` by absolute path (`LoadLibraryExW` +
+  `LOAD_WITH_ALTERED_SEARCH_PATH`), derived from the module's own location.
+
+The bundle's `piper.dll` also carries a patch that constructs onnxruntime's
+`Ort::Env` lazily; upstream declares it at namespace scope, where its
+constructor runs under the Windows loader lock and crashes. See
+`patches/piper-lazy-ort-env.patch` in `xp_wellys_libs` (≥ 0.4.2).
 
 ### Updating the prebuilt libs (`xp_wellys_libs`)
 
@@ -517,7 +545,7 @@ restart; the phraseology language from the next plugin start (Issue #56).
 | `debug_traffic` | `false` | Shows the Traffic tab in the ATC panel (lists the 10 nearest aircraft from the TCAS DataRefs) |
 | `debug_text_input` | `false` | Shows an InputText field below the transcript in the Status tab. Typed text is fed directly into `engine::process_transcript` via `atc_session::submit_text()` — STT is skipped, LM + state machine + TTS run as in the voice path. Helpful without a headset and to isolate ATC-logic bugs from STT errors. PTT stays active in parallel; the shorthand `REG` expands to the phonetic callsign. |
 | `traffic_features_enabled` | `true` | Master switch for the traffic subsystem (advisories, landing sequencing, go-around trigger). Off → `traffic_context::update()` returns an empty snapshot and every downstream consumer becomes a no-op. Needs a traffic provider anyway (LiveTraffic, xPilot, swift, X-IvAp, native AI). |
-| `backend_mode` | `local` | `local` (whisper + llama + Piper, arm64 only), `openai` (Whisper API + Chat Completions + TTS API) or `mistral` (Voxtral STT + Mistral Chat Completions + Voxtral TTS). The x86_64 slice **and the Windows build** silently rewrite `local` to `openai` at startup, since Local is unavailable there; `mistral` is honored everywhere. |
+| `backend_mode` | `local` | `local` (whisper + llama + Piper — arm64-macOS and win-x64), `openai` (Whisper API + Chat Completions + TTS API) or `mistral` (Voxtral STT + Mistral Chat Completions + Voxtral TTS). The **x86_64-macOS slice** silently rewrites `local` to `openai` at startup, since it has no local backends compiled in; the other two modes are honored everywhere. |
 | `api_key_saved` | `false` | Flag only — set automatically when the user clicks **Save Key** in the settings. The actual OpenAI key lives in the macOS Keychain under service `com.xp_wellys_devfr_atc.openai` / account `default`. Cleared by **Delete Key**. |
 | `openai_stt_model` | `whisper-1` | OpenAI Whisper model ID for the STT call. |
 | `openai_lm_model` | `gpt-4o-mini` | OpenAI Chat Completions model ID for the intent classifier. JSON mode is enabled automatically. |
@@ -714,7 +742,7 @@ exam questions, NfL Teil B) and the coverage matrix are under
 | Limitation | Impact | Effort |
 |---|---|---|
 | **No IFR — by design** | This plugin models VFR radio only: no IFR clearances, no flight-plan filing, no FMS/routing, no SID/STAR. There is genuinely no IFR flow in the code (the word "ifr" appears only as a TTS acronym and as a recognition token in the intention keyword lists — recognition surface, not a feature). | Not planned here. IFR is a separate product with its own plugin: **[Welly's IFR ATC](https://github.com/rwellinger/xp_welly_llm_atc)** — clearance delivery, SID/STAR from X-Plane's CIFP data, SimBrief route integration, en-route sector handoffs, approach and landing. English/ICAO only (no NfL/BZF profile) and needs extra data installed (SimBrief OFP, OpenAir airspace file). The two plugins install side by side. |
-| **Local inference on Apple Silicon only** | Intel Macs (x86_64 slice) and **Windows** (`win_x64` build, verified on Windows 11) can run the plugin, but only in OpenAI or Mistral cloud mode (API key + billing needed) — no local offline mode | Solved for macOS by the Universal Binary; lifting the restriction for Local mode would need Metal alternatives + a non-Apple onnxruntime build (on Windows additionally a CUDA/DirectML path) |
+| **No local inference on Intel Macs** | The x86_64 macOS slice runs the plugin in OpenAI or Mistral cloud mode only (API key + billing needed) — no local offline mode. Apple Silicon (Metal) and Windows x64 (Vulkan) both have it. | Unlikely to change: GitHub retired the Intel `macos-13` runners, so the prebuilt bundle for that slice cannot be produced in CI at all. Intel Macs are a shrinking niche and lose nothing but the offline option. |
 | **German & English, no FR/IT** | VFR phraseology comes as a German (NfL/BZF, default) and an English (ICAO) profile, switchable via `atc_language`. The interface language is independently selectable (`ui_language`). Further languages (French/Italian for western Switzerland or Ticino) are not planned | By design — the focus stays on DACH VFR |
 | **OpenAI voices speak German with a US accent** | In `backend_mode=openai` Whisper transcribes correctly and the LM answers correctly in German, but the `tts-1` voices (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`) are English-trained and render German with an audible US accent — NATO letters in particular sound anglophone (e.g. "Tschaar-lie" instead of "Tschar-li"). Acceptable for casual practice, unrealistic for BZF/AZF training. | Solved for Local mode by Piper `de_DE-thorsten`. For cloud users, **Mistral Cloud** is the alternative — Voxtral TTS is natively multilingual and speaks German without a US accent. |
 | **Local STT mishears spelled callsigns** | In Local mode the small `ggml-small-q5_1` Whisper often mishears German NATO spelling sequences as real words ("Whiskey Romeo Oscar" → "Wisskrieg"/"Wiesbaecki"), which breaks intent recognition. The phraseology itself is recognized well — only the callsign suffers. Consequence: **BZF strict mode** can wrongly reject correct readbacks with Local (and Mistral). The `initial_prompt` is already pre-conditioned with the own callsign (`atc_session.cpp`), which raises the hit rate but does not fully lift the model limit. | Local mode: leave strict mode off (the Settings tab warns when strict is active). A larger Whisper (`large-v3-turbo`, ~547 MB) was tested and rejected — too slow, sim stalls on approach. **OpenAI** is much more robust on spelled callsigns and the recommendation if strict mode is wanted. |
