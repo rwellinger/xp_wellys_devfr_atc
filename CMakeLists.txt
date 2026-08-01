@@ -519,22 +519,29 @@ elseif(WIN32)
             target_link_libraries(xp_wellys_vfr_atc PRIVATE xp_wellys_libs::piper)
         endif()
 
-        # Delay-load the two runtime DLLs. backend_mode is a RUNTIME setting, so
-        # one binary serves local and cloud users alike — neither DLL should be
-        # loaded by users who never reach the code path that needs it:
+        # piper.dll is a LOAD-TIME import, deliberately.
         #
-        #  * piper.dll (and onnxruntime.dll behind it) — only touched once the
-        #    user selects local TTS or the hybrid override (issue #74).
-        #  * vulkan-1.dll — comes from the graphics driver, not from us. As a
-        #    load-time import a missing/broken loader would mean the .xpl does
-        #    not load AT ALL, with no in-cockpit diagnostic, even for a cloud-only
-        #    user who never runs ggml. Delayed, it is only resolved when ggml
-        #    actually registers its Vulkan backend, i.e. in local mode.
+        # It used to be delay-loaded (issue #74) so a cloud-only user would never
+        # pull in Piper/onnxruntime. That turned out to be unusable: onnxruntime
+        # uses static TLS (__declspec(thread)), and a DLL with static TLS loaded
+        # *dynamically* needs the loader to hand out TLS slots after the fact.
+        # In a process the size of X-Plane that fails — LoadLibrary returns
+        # ERROR_DLL_INIT_FAILED (1114 / NT 0xC0000142), and through the delay-load
+        # thunk it surfaced as 0xC06D007E and killed the sim inside piper_create.
+        # The same failure was already visible in the xp_wellys_libs smoke test,
+        # where it was written off as a headless-CI quirk.
         #
-        # delayimp provides the thunks.
-        target_link_libraries(xp_wellys_vfr_atc PRIVATE delayimp)
-        target_link_options(xp_wellys_vfr_atc PRIVATE /DELAYLOAD:piper.dll)
+        # As a load-time import the loader assigns the TLS slots while it maps
+        # the .xpl, which works. The cost is the one #74 tried to avoid:
+        # onnxruntime.dll (~12 MB) is mapped for every Windows user, including
+        # cloud-only ones. A working local voice is worth more than that mapping.
+        #
+        # vulkan-1.dll stays delayed: it comes from the graphics driver, has no
+        # static-TLS problem, and as a load-time import a missing loader would
+        # stop the .xpl from loading at all — with no in-cockpit diagnostic —
+        # even for a user who never runs ggml.
         if(XPWELLYS_USE_LOCAL_INFERENCE)
+            target_link_libraries(xp_wellys_vfr_atc PRIVATE delayimp)
             target_link_options(xp_wellys_vfr_atc PRIVATE /DELAYLOAD:vulkan-1.dll)
         endif()
 

@@ -58,10 +58,6 @@
 #include <unordered_set>
 #include <utility>
 
-#if defined(_WIN32) && defined(XPWELLYS_USE_LOCAL_TTS)
-#include <windows.h>
-#endif
-
 namespace backends::loader {
 
 namespace {
@@ -435,79 +431,6 @@ struct PiperShim final : ITextToSpeech {
   }
 };
 
-#if defined(_WIN32)
-// piper.dll is delay-loaded (see the /DELAYLOAD in CMakeLists) so a cloud-only
-// user never pulls in Piper or onnxruntime. The catch: the delay-load helper
-// resolves the DLL at the FIRST piper call using the PROCESS search path —
-// X-Plane.exe's directory, System32, PATH. Our win_x64/ directory is not on it;
-// that one is only consulted for the .xpl's own load-time imports. So the
-// helper cannot find piper.dll and raises 0xC06D007E (ERROR_MOD_NOT_FOUND),
-// which without a guard kills X-Plane in the middle of piper_create.
-//
-// Load it explicitly by absolute path before any piper symbol is touched.
-// LOAD_WITH_ALTERED_SEARCH_PATH makes piper.dll's own dependency
-// (onnxruntime.dll) resolve from that same directory. Afterwards the delay-load
-// thunk asks for "piper.dll" by name and gets the already-loaded module.
-bool preload_piper_dll() {
-  static bool attempted = false;
-  static bool loaded = false;
-  if (attempted)
-    return loaded;
-  attempted = true;
-
-  // Derive the directory from THIS module's own path rather than rebuilding it
-  // from model_paths::plugin_root(). Two reasons: the XPLM path arrives with
-  // mixed separators (C:\...\plugin/win_x64/...), and LoadLibraryEx with
-  // LOAD_WITH_ALTERED_SEARCH_PATH wants a clean fully-qualified Win32 path;
-  // and the .xpl already sits in win_x64 next to piper.dll, so there is nothing
-  // to reconstruct in the first place.
-  HMODULE self = nullptr;
-  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                          reinterpret_cast<LPCWSTR>(&preload_piper_dll),
-                          &self)) {
-    logging::error("piper.dll preload: GetModuleHandleEx failed (%lu)",
-                   static_cast<unsigned long>(GetLastError()));
-    return false;
-  }
-
-  wchar_t self_path[MAX_PATH * 4] = {};
-  constexpr DWORD kSelfPathCap =
-      static_cast<DWORD>(sizeof(self_path) / sizeof(self_path[0]));
-  const DWORD n = GetModuleFileNameW(self, self_path, kSelfPathCap);
-  if (n == 0 || n >= kSelfPathCap) {
-    logging::error("piper.dll preload: GetModuleFileName failed (%lu)",
-                   static_cast<unsigned long>(GetLastError()));
-    return false;
-  }
-
-  // Strip the .xpl filename, keep the trailing separator, append piper.dll.
-  std::wstring dll(self_path, self_path + n);
-  const size_t sep = dll.find_last_of(L"\\/");
-  if (sep == std::wstring::npos) {
-    logging::error("piper.dll preload: unexpected module path");
-    return false;
-  }
-  dll.resize(sep + 1);
-  dll += L"piper.dll";
-
-  // Narrow copy for logging only — XPLMDebugString is ASCII-only anyway.
-  std::string dll_utf8(dll.size(), '\0');
-  for (size_t i = 0; i < dll.size(); ++i)
-    dll_utf8[i] = (dll[i] >= 0x20 && dll[i] < 0x7F) ? static_cast<char>(dll[i])
-                                                    : '?';
-
-  if (!LoadLibraryExW(dll.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH)) {
-    logging::error("piper.dll preload failed for %s (GetLastError=%lu)",
-                   dll_utf8.c_str(), static_cast<unsigned long>(GetLastError()));
-    return false;
-  }
-  logging::info("piper.dll preloaded from %s", dll_utf8.c_str());
-  loaded = true;
-  return true;
-}
-#endif
-
 // Initialise the shared Piper instance lazily, register the manager
 // TTS shim on first creation. Returns false (and tags every voice row
 // LoadError) if espeak-ng-data is missing.
@@ -515,20 +438,6 @@ bool ensure_piper_init() {
   using K = model_manifest::Kind;
   if (g_piper)
     return true;
-
-#if defined(_WIN32)
-  if (!preload_piper_dll()) {
-    const std::string msg =
-        "piper.dll could not be loaded from the plugin's win_x64 directory. "
-        "Local TTS unavailable.";
-    for (const auto &e : model_manifest::all()) {
-      if (e.kind == K::PiperVoice || e.kind == K::PiperVoiceConfig)
-        update_state(e, FileState::LoadError, msg);
-    }
-    logging::error("%s", msg.c_str());
-    return false;
-  }
-#endif
 
   const std::string &espeak_dir = model_paths::espeakng_data_dir();
   if (!dir_exists(espeak_dir)) {
