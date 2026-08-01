@@ -116,14 +116,21 @@ bool LlamaLm::open(const std::string &model_path) {
   // process — observed crash UUID 935e8d56 from May 2026.
   cparams.n_batch = 2048;
   cparams.n_ubatch = 2048;
-  // Token-by-token decode is GPU-bound on Metal — two CPU threads are
-  // enough and free cores for the X-Plane main thread + physics. The
-  // batch path (initial prompt eval) keeps the larger thread pool.
+  // Token-by-token decode is GPU-bound — two CPU threads are enough and free
+  // cores for the X-Plane main thread + physics. The batch path (initial prompt
+  // eval) keeps the larger thread pool.
   cparams.n_threads = 2;
   cparams.n_threads_batch = 4;
-  // Flash attention cuts attention memory bandwidth roughly in half on
-  // Metal for the ~1k-token classify prompts; sampling unchanged.
+  // Flash attention cuts attention memory bandwidth roughly in half on Metal
+  // for the ~1k-token classify prompts; sampling unchanged. Only forced on
+  // Apple, where it is measured: on Vulkan, FA support varies by GPU and driver
+  // version, so AUTO lets llama.cpp decide rather than demanding a path the
+  // device may not have.
+#if defined(__APPLE__)
   cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+#else
+  cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+#endif
   cparams.no_perf = true;
 
   ctx_ = llama_init_from_model(model_, cparams);

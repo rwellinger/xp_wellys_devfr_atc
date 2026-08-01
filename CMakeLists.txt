@@ -27,16 +27,17 @@ option(BUILD_TESTS "Build Catch2 unit tests" ON)
 
 # ── Local-inference toggle ───────────────────────────────────────────────────
 # When ON, the plugin module is compiled with whisper.cpp + llama.cpp +
-# Piper (Metal-accelerated, Apple Silicon only). When OFF, those
-# backends are skipped entirely and only the OpenAI cloud clients are
-# built — letting the same source tree produce an x86_64 (Intel)
-# slice that runs against api.openai.com.
+# Piper. The ggml GPU backend depends on the platform and comes baked into the
+# prebuilt bundle: Metal on Apple Silicon, Vulkan on Windows x64. When OFF,
+# those backends are skipped entirely and only the cloud clients are built —
+# letting the same source tree produce an x86_64 (Intel) macOS slice that runs
+# against api.openai.com / api.mistral.ai.
 #
-# A universal binary is assembled by building twice (once per
+# A universal macOS binary is assembled by building twice (once per
 # architecture) and lipo-ing the two .xpl outputs together — see
-# `make build`.
+# `make build`. Windows is a single x64 build, CI only.
 option(XPWELLYS_USE_LOCAL_INFERENCE
-    "Compile local whisper.cpp/llama.cpp/Piper backends (Apple Silicon only)"
+    "Compile local whisper.cpp/llama.cpp/Piper backends (arm64-macOS + win-x64)"
     ON)
 
 # ── Local-TTS toggle (Piper) ─────────────────────────────────────────────────
@@ -103,11 +104,11 @@ endif()
 file(READ "${CMAKE_SOURCE_DIR}/VERSION.txt" VERSION_STRING)
 string(STRIP "${VERSION_STRING}" VERSION_STRING)
 
-# Architecture + deployment target.
+# Architecture + deployment target (macOS only — Windows is x64 by definition).
 #
-# Local inference (whisper.cpp / llama.cpp / Piper) ships Apple Silicon
-# Metal kernels and uses an arm64-only onnxruntime prebuilt, so any
-# build that enables XPWELLYS_USE_LOCAL_INFERENCE must target arm64.
+# On macOS, local inference ships Apple Silicon Metal kernels and uses an
+# arm64-only onnxruntime prebuilt, so any Apple build that enables
+# XPWELLYS_USE_LOCAL_INFERENCE must target arm64.
 # The OpenAI-only build is libcurl + system frameworks all the way
 # down and is architecture-neutral, so it cleanly produces an x86_64
 # slice for Intel Macs. The two slices are then lipo'd together into
@@ -479,11 +480,12 @@ if(APPLE)
         )
     endif()
 elseif(WIN32)
-    # ── Windows: cloud-only slice (XPWELLYS_USE_LOCAL_INFERENCE=OFF) ─────
-    # Functionally the Intel x86_64 macOS slice: OpenAI + Mistral over
-    # libcurl, no whisper/llama/Piper/onnxruntime, no Metal. Built by
-    # MSVC in CI (windows-latest) with libcurl from vcpkg. No @loader_path
-    # / lipo / dylib staging — a single self-contained win.xpl DLL.
+    # ── Windows: full local stack (XPWELLYS_USE_LOCAL_INFERENCE=ON) ──────
+    # whisper + llama (ggml with the Vulkan GPU backend) + Piper, all from the
+    # prebuilt xp_wellys_libs win-x64 bundle, alongside the OpenAI/Mistral cloud
+    # backends over libcurl. Built by MSVC in CI (windows-latest) with libcurl
+    # from vcpkg. No @loader_path / lipo, but the artifact does carry the Piper
+    # runtime DLLs — see the staging block below.
     target_compile_definitions(xp_wellys_vfr_atc PRIVATE
         APL=0 IBM=1 LIN=0
         XPLM200=1 XPLM210=1 XPLM300=1 XPLM301=1 XPLM400=1
@@ -507,23 +509,34 @@ elseif(WIN32)
         CURL::libcurl
     )
 
-    if(XPWELLYS_USE_LOCAL_TTS)
-        # Hybrid TTS on Windows (issue #74): link the Piper-only bundle's import
-        # libs (xp_wellys_libs::piper → piper.lib + onnxruntime.lib) and ship the
-        # runtime DLLs + espeak-ng-data. The Windows artifact is therefore no
-        # longer DLL-free — onnxruntime.dll ships alongside (a deliberate tradeoff
-        # for the accent-free German Piper voice; STT/LM stay on the cloud).
-        target_link_libraries(xp_wellys_vfr_atc PRIVATE xp_wellys_libs::piper)
+    if(XPWELLYS_USE_LOCAL_BUNDLE)
+        # ::inference carries the whole graph (whisper/llama/ggml archives +
+        # ggml-vulkan + vulkan-1 + piper.lib + onnxruntime.lib); ::piper is the
+        # TTS-only subset for a build without local STT/LM.
+        if(XPWELLYS_USE_LOCAL_INFERENCE)
+            target_link_libraries(xp_wellys_vfr_atc PRIVATE xp_wellys_libs::inference)
+        else()
+            target_link_libraries(xp_wellys_vfr_atc PRIVATE xp_wellys_libs::piper)
+        endif()
 
-        # Delay-load piper.dll so a default cloud-only Windows install NEVER
-        # loads Piper/onnxruntime at plugin startup — the DLL (and, through it,
-        # onnxruntime.dll) is pulled in lazily on the first Piper call, i.e.
-        # only when the user actually enables the hybrid TTS override. Without
-        # this, piper.lib is a load-time import and X-Plane would load
-        # onnxruntime.dll for every Windows user; any init failure there would
-        # break plugin loading for all of them. delayimp provides the thunk.
+        # Delay-load the two runtime DLLs. backend_mode is a RUNTIME setting, so
+        # one binary serves local and cloud users alike — neither DLL should be
+        # loaded by users who never reach the code path that needs it:
+        #
+        #  * piper.dll (and onnxruntime.dll behind it) — only touched once the
+        #    user selects local TTS or the hybrid override (issue #74).
+        #  * vulkan-1.dll — comes from the graphics driver, not from us. As a
+        #    load-time import a missing/broken loader would mean the .xpl does
+        #    not load AT ALL, with no in-cockpit diagnostic, even for a cloud-only
+        #    user who never runs ggml. Delayed, it is only resolved when ggml
+        #    actually registers its Vulkan backend, i.e. in local mode.
+        #
+        # delayimp provides the thunks.
         target_link_libraries(xp_wellys_vfr_atc PRIVATE delayimp)
         target_link_options(xp_wellys_vfr_atc PRIVATE /DELAYLOAD:piper.dll)
+        if(XPWELLYS_USE_LOCAL_INFERENCE)
+            target_link_options(xp_wellys_vfr_atc PRIVATE /DELAYLOAD:vulkan-1.dll)
+        endif()
 
         # Stage every bundle DLL (piper.dll + onnxruntime.dll +
         # onnxruntime_providers_shared.dll) next to the built .xpl so the Windows

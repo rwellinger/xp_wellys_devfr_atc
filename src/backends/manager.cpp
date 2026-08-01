@@ -12,6 +12,8 @@
 #include <curl/curl.h>
 #if defined(__APPLE__)
 #include <pthread/qos.h>
+#elif defined(_WIN32)
+#include <windows.h>
 #endif
 
 #include <atomic>
@@ -72,21 +74,23 @@ void enqueue_callback(std::function<void()> fn) {
 // Spawn a detached worker. The atomic counter tracks lifetime so
 // stop() can wait for them; we don't keep std::thread handles around.
 //
-// Workers run at QOS_CLASS_UTILITY so the macOS scheduler deprioritizes
-// them against X-Plane's renderer thread. Whisper STT and Llama LM both
-// hit the Metal command queue — without QoS hints they compete equally
-// with X-Plane and FPS drops during landing-phase ATC calls. TTS is
-// CPU-only so the QoS hint is harmless there.
+// Workers are deprioritized against X-Plane's renderer thread. Whisper STT and
+// Llama LM both drive the GPU (Metal on macOS, Vulkan on Windows) — without a
+// scheduling hint they compete equally with X-Plane and FPS drops during
+// landing-phase ATC calls. TTS is CPU-only, so the hint is harmless there.
 template <class Fn> void spawn_worker(Fn &&fn) {
   g_active_workers.fetch_add(1, std::memory_order_relaxed);
   std::thread t([fn = std::forward<Fn>(fn)]() mutable {
 #if defined(__APPLE__)
-    // QoS hints are a Darwin/Metal concern (deprioritize local whisper/
-    // llama Metal workers against X-Plane's renderer). The non-Apple
-    // builds (Intel x86_64, Windows) are cloud-only with no Metal
-    // contention, so there is nothing to deprioritize against — the
-    // deliberate resolution here is a no-op, not a deferred port (#23).
     pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#elif defined(_WIN32)
+    // Windows has no QoS class equivalent; thread priority is the lever.
+    // BELOW_NORMAL rather than LOWEST: these workers must still finish
+    // promptly (the pilot is waiting on the reply), they just must not
+    // preempt the renderer. This used to be a deliberate no-op while the
+    // Windows slice was cloud-only with nothing to contend for — local
+    // inference (whisper/llama on Vulkan) makes it real (#23).
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 #endif
     fn();
     g_active_workers.fetch_sub(1, std::memory_order_relaxed);
