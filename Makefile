@@ -34,7 +34,7 @@ CATCH2_VERSION := 3.15.1
 # plus the generated skunkcrafts_updater_*.txt control files.
 SKUNK_DIR := build/skunkcrafts
 
-.PHONY: all help setup setup-cloud build ci-fast ci-remote win-artifact install clean distclean format lint sanitize release release-build skunkcrafts cleanup-tags cleanup-branches cleanup-runs repl run-repl test test-unit test-scenarios
+.PHONY: all help setup setup-cloud build ci-fast ci-remote win-artifact win-zip install clean distclean format lint sanitize release release-build skunkcrafts cleanup-tags cleanup-branches cleanup-runs repl run-repl test test-unit test-scenarios
 
 .DEFAULT_GOAL := help
 
@@ -51,7 +51,8 @@ help:
 	@echo "  make build             Build universal plugin (arm64 local+cloud, x86_64 cloud-only) -> build/xp_wellys_vfr_atc.xpl"
 	@echo "  make ci-fast           Fast cloud-only arm64 sanity build + unit/scenario tests (no submodules, no local backends)"
 	@echo "  make ci-remote         Trigger the GitHub CI (fast macOS + Windows slice) on the current branch via gh (builds the PUSHED state)"
-	@echo "  make win-artifact      Download the newest Windows CI artifact (xp_wellys_vfr_atc-win) via gh -> dist-win/"
+	@echo "  make win-artifact      Download the newest Windows CI artifact via gh -> dist-win/ + transfer zips"
+	@echo "  make win-zip           Re-pack dist-win/ into transfer zips (no download)"
 	@echo "  make repl              Build headless CLI -> build/atc_repl"
 	@echo "  make run-repl          Build + run the CLI (stdin transcripts)"
 	@echo "  make test              Run unit tests + scenario tests"
@@ -285,15 +286,44 @@ ci-remote:
 
 # Download the freshest Windows CI artifact into dist-win/ (drop-in tree:
 # win_x64/xp_wellys_vfr_atc.xpl + data/). Pulls from the most recent run
-# that produced the artifact.
+# that produced the artifact, then packs two zips for transfer to the test box.
+#
+# Zipped rather than raw files on purpose: a zip carries a per-entry CRC, so a
+# truncated transfer fails loudly at unpack time instead of looking like a
+# broken DLL — which is exactly the kind of ghost that costs an afternoon. It
+# also cuts ~110 MB to ~30 MB and turns hundreds of files into one, which
+# matters over a remote-desktop file channel.
+WIN_ZIP_FULL   := dist-win/xp_wellys_vfr_atc_win_full.zip
+WIN_ZIP_BINARY := dist-win/xp_wellys_vfr_atc_win_x64.zip
+
 win-artifact:
 	@command -v gh >/dev/null 2>&1 || { \
 	    echo "gh not found. Install with: brew install gh (then: gh auth login)"; exit 1; }
 	@rm -rf dist-win && mkdir -p dist-win
 	@echo "Downloading newest xp_wellys_vfr_atc-win artifact -> dist-win/ ..."
 	@gh run download -n xp_wellys_vfr_atc-win -D dist-win
-	@echo "Done. Windows drop-in tree:"
+	@$(MAKE) --no-print-directory win-zip
+
+# Pack dist-win/ without re-downloading. Split in two because the usual case is
+# a code change, where only the .xpl moved: win_x64 alone is the smaller, faster
+# transfer. The full tree is for a first install or when data/ changed.
+win-zip:
+	@test -d dist-win/win_x64 || { \
+	    echo "dist-win/win_x64 missing - run 'make win-artifact' first"; exit 1; }
+	@rm -f $(WIN_ZIP_FULL) $(WIN_ZIP_BINARY)
+	@cd dist-win && zip -q -r $(notdir $(WIN_ZIP_BINARY)) win_x64
+	@cd dist-win && zip -q -r $(notdir $(WIN_ZIP_FULL)) . -x '*.zip'
+	@echo ""
+	@echo "Windows drop-in ready:"
 	@find dist-win -name '*.xpl' -print
+	@echo ""
+	@ls -lh $(WIN_ZIP_BINARY) $(WIN_ZIP_FULL) | awk '{printf "  %-52s %s\n", $$9, $$5}'
+	@echo ""
+	@echo "  binary zip : win_x64/ only - the usual update (just the .xpl moved)"
+	@echo "  full zip   : whole tree - first install, or when data/ changed"
+	@echo ""
+	@echo "On the target, after unpacking, clear the download mark:"
+	@echo "  Get-ChildItem <plugin>\\win_x64 | Unblock-File"
 
 # ── REPL (headless CLI) ───────────────────────────────────────────────────────
 repl: $(PREBUILT_SENTINEL) $(SDK_SENTINEL) $(IMGUI_SENTINEL) $(JSON_SENTINEL) $(CATCH2_SENTINEL)

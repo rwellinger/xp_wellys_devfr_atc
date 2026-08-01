@@ -519,17 +519,22 @@ elseif(WIN32)
             target_link_libraries(xp_wellys_vfr_atc PRIVATE xp_wellys_libs::piper)
         endif()
 
-        # Delay-load the two runtime DLLs. backend_mode is a RUNTIME setting, so
-        # one binary serves local and cloud users alike — neither DLL should be
-        # loaded by users who never reach the code path that needs it:
+        # Delay-load piper.dll and vulkan-1.dll, so neither is mapped for users
+        # who never reach the code path that needs it:
         #
         #  * piper.dll (and onnxruntime.dll behind it) — only touched once the
         #    user selects local TTS or the hybrid override (issue #74).
-        #  * vulkan-1.dll — comes from the graphics driver, not from us. As a
-        #    load-time import a missing/broken loader would mean the .xpl does
-        #    not load AT ALL, with no in-cockpit diagnostic, even for a cloud-only
-        #    user who never runs ggml. Delayed, it is only resolved when ggml
-        #    actually registers its Vulkan backend, i.e. in local mode.
+        #  * vulkan-1.dll comes from the graphics driver, not from us. As a
+        #    load-time import a missing or broken loader would stop the .xpl
+        #    from loading at all, with no in-cockpit diagnostic, even for a user
+        #    who never runs ggml.
+        #
+        # Historical note: this delay-load was briefly blamed for a crash on
+        # Windows and turned into a load-time import, which only made it worse
+        # (X-Plane then refused the plugin outright). The real fault was in
+        # libpiper — a global Ort::Env whose constructor ran under the loader
+        # lock — and is fixed upstream in xp_wellys_libs 0.4.2. Delay-loading
+        # is unproblematic and remains the right default.
         #
         # delayimp provides the thunks.
         target_link_libraries(xp_wellys_vfr_atc PRIVATE delayimp)

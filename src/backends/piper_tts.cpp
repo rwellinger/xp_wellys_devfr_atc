@@ -18,11 +18,37 @@
 
 #include <cstdint>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace backends {
 
 namespace {
 
 constexpr const char *kBackendTag = "TTS-LOCAL";
+
+#if defined(_WIN32)
+// piper_create reaches into onnxruntime's session init, which on Windows can
+// die with a structured exception (access violation, DLL init failure) rather
+// than returning null. Unguarded that takes X-Plane down with no diagnostic —
+// the process simply ends and Log.txt stops mid-line.
+//
+// Kept as a plain C-style function on purpose: __try/__except cannot live in a
+// frame that needs C++ object unwinding, so nothing here may have a destructor.
+piper_synthesizer *piper_create_guarded(const char *onnx_path,
+                                        const char *json_path,
+                                        const char *espeak_dir,
+                                        unsigned long *seh_code) {
+  *seh_code = 0;
+  __try {
+    return piper_create(onnx_path, json_path, espeak_dir);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    *seh_code = static_cast<unsigned long>(GetExceptionCode());
+    return nullptr;
+  }
+}
+#endif
 
 int16_t f32_to_i16(float x) {
   if (x > 1.0f)
@@ -62,13 +88,40 @@ bool PiperTts::load_voice(const std::string &voice_id,
       return true; // already loaded
   }
 
+  // Log the exact inputs BEFORE the call: if piper_create dies inside
+  // onnxruntime, this is the last thing written, and the three paths are what
+  // any post-mortem starts from.
+  logging::info("[%s] piper_create voice=%s onnx=%s json=%s espeak=%s",
+                kBackendTag, voice_id.c_str(), voice_onnx_path.c_str(),
+                voice_json_path.c_str(), espeakng_dir_.c_str());
+
   // piper_create may take ~50–300 ms on M1 (ONNX session init + voice
   // config parse). Run it outside the mutex so concurrent load_voice
   // calls for *different* ids overlap.
+#if defined(_WIN32)
+  unsigned long seh_code = 0;
+  piper_synthesizer *s =
+      piper_create_guarded(voice_onnx_path.c_str(), voice_json_path.c_str(),
+                           espeakng_dir_.c_str(), &seh_code);
+  if (seh_code != 0) {
+    // Survive it: a broken voice must degrade to "no local TTS", not to a
+    // dead simulator. The code is the diagnosis — 0xC0000005 is an access
+    // violation, 0xC0000135 a missing DLL, 0xC0000142 a failed DLL init.
+    logging::error("[%s] piper_create raised structured exception 0x%08lX for "
+                   "voice %s - local TTS unavailable",
+                   kBackendTag, seh_code, voice_id.c_str());
+    return false;
+  }
+#else
   piper_synthesizer *s = piper_create(
       voice_onnx_path.c_str(), voice_json_path.c_str(), espeakng_dir_.c_str());
-  if (!s)
+#endif
+  if (!s) {
+    logging::error("[%s] piper_create returned null for voice %s", kBackendTag,
+                   voice_id.c_str());
     return false;
+  }
+  logging::info("[%s] voice %s loaded", kBackendTag, voice_id.c_str());
 
   std::lock_guard<std::mutex> lk(mutex_);
   // Race: another thread may have inserted while we created. Drop the
