@@ -178,16 +178,23 @@ jobs:
             build/espeak_ng-install/share/espeak-ng-data
           if-no-files-found: error
 
-  # ── Windows slice (cloud STT/LM + local Piper TTS) ──────────────────────────
+  # ── Windows slice (all three backends: local + OpenAI + Mistral) ────────────
   # GitHub Actions is the Windows compiler — no local MSVC toolchain needed.
-  # STT/LM stay cloud (OpenAI/Mistral, static libcurl from vcpkg); TTS is the
-  # local Piper voice via the prebuilt xp_wellys_libs win-x64 bundle
-  # (XPWELLYS_USE_LOCAL_INFERENCE=OFF, XPWELLYS_USE_LOCAL_TTS=ON — issue #74).
+  # The slice runs the FULL local stack alongside the cloud backends:
+  # XPWELLYS_USE_LOCAL_INFERENCE=ON + XPWELLYS_USE_LOCAL_TTS=ON against the
+  # prebuilt xp_wellys_libs win-x64-full bundle (>= v0.4.0) — whisper + llama on
+  # ggml/Vulkan, Piper TTS on CPU, OpenAI/Mistral over static libcurl from
+  # vcpkg. (It was cloud-STT/LM + local-TTS-only up to issue #74; the local
+  # stack landed with the Vulkan work.)
   # The per-arch .xpl MUST carry the plugin name, not win.xpl (X-Plane 12 on
-  # Windows silently skips a generically named file). The artifact now carries
+  # Windows silently skips a generically named file). The artifact carries
   # piper.dll + onnxruntime.dll (+ providers_shared) next to the .xpl and
   # espeak-ng-data under Resources/ — no longer DLL-free, the deliberate
-  # tradeoff for the accent-free German voice.
+  # tradeoff for the accent-free German voice. whisper/llama/ggml are STATIC
+  # archives inside the .xpl and Vulkan needs no redist, so those three DLLs
+  # are the complete runtime set the bundle contributes. Note they are built
+  # against the DYNAMIC CRT: the target machine needs the MSVC 2015-2022
+  # redistributable (MSVCP140/VCRUNTIME140) — see docs/README.md.
   build-windows:
     needs: test # abort the ~15-30 min Windows build if the suite is red
     runs-on: windows-latest
@@ -432,10 +439,27 @@ jobs:
 
           cd dist && zip -r xp_wellys_vfr_atc.zip xp_wellys_vfr_atc/
 
+      - name: Locate hand-written release notes
+        id: notes
+        # docs/release-notes/<tag>.md, if present, becomes the body; the
+        # auto-generated commit list is appended below it. Absent is fine and
+        # deliberately NOT an error — a hotfix tag does not need prose — but it
+        # is logged, because a typo in the filename would otherwise silently
+        # publish a release with nothing but a commit list.
+        run: |
+          f="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then
+            echo "using $f"
+            echo "path=$f" >> "$GITHUB_OUTPUT"
+          else
+            echo "no $f — publishing with auto-generated notes only"
+          fi
+
       - name: Create release with assets
         uses: softprops/action-gh-release@v2
         with:
           files: dist/xp_wellys_vfr_atc.zip
+          body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
 
       - name: Publish SkunkCrafts update tree

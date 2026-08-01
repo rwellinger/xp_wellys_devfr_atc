@@ -24,6 +24,12 @@ deliberately NOT tracked: anything not in the whitelist is left untouched by
 the updater, so the user's ~2 GB of models survive every update. They must
 also stay out of the blacklist, which DELETES.
 
+    skunkcrafts_updater_blacklist.txt   <relative_path>   -- DELETED on the client
+
+The blacklist is the one control file that destroys data, so it carries
+exactly one thing: files we used to ship under a name we no longer ship.
+See LEGACY_PATHS.
+
 Usage:
     python3 tools/skunkcrafts/generate.py \
         --tree  "<X-Plane>/Resources/available plugins/xp_wellys_vfr_atc" \
@@ -54,6 +60,27 @@ IGNORE_GLOBS = [
 # settings.json carries the user's backend_mode + api_key_saved flags.
 ONCE_GLOBS = [
     "data/settings.json",
+]
+
+# Obsolete files to DELETE on the client. Exact paths only — never a glob,
+# never anything a user could own.
+#
+# Why this exists: v0.6.0 and earlier shipped the plugin as
+# xp_wellys_devfr_atc/ with a matching xp_wellys_devfr_atc.xpl; v0.6.1 renamed
+# both. The updater manages whatever directory holds the cfg, so it happily
+# pulled the new .xpl into the OLD folder — but nothing removes a file that is
+# merely absent from the whitelist (that rule is what keeps the user's ~2 GB of
+# models safe). The stale .xpl therefore stayed, X-Plane loaded BOTH, and since
+# they share a signature and command names the old build could win. Symptom:
+# the updater UI reports the new version while the plugin's own window still
+# shows the old one.
+#
+# Deleting a file the client never had is a no-op, so this stays in place
+# permanently — there is no point at which it becomes safe to assume no
+# pre-v0.6.1 install is left.
+LEGACY_PATHS = [
+    "mac_x64/xp_wellys_devfr_atc.xpl",
+    "win_x64/xp_wellys_devfr_atc.xpl",
 ]
 
 
@@ -104,14 +131,40 @@ def main() -> None:
     sizes.sort()
     oncelist.sort()
 
+    # A path that is both shipped and blacklisted would have the client delete
+    # a live file (and, depending on ordering, re-download it every run). The
+    # blacklist is the one list here that destroys data, so this is a hard
+    # failure, not a warning.
+    tracked = {entry.split("|", 1)[0] for entry in whitelist} | set(oncelist)
+    clash = sorted(tracked.intersection(LEGACY_PATHS))
+    if clash:
+        raise SystemExit(
+            "refusing to generate: these paths are both shipped and "
+            f"blacklisted: {', '.join(clash)}"
+        )
+    # Equally: never blacklist something we deliberately leave alone (models,
+    # flight logs). Those must simply be untracked.
+    ignored_clash = sorted(p for p in LEGACY_PATHS if matches(p, IGNORE_GLOBS))
+    if ignored_clash:
+        raise SystemExit(
+            "refusing to generate: blacklisted paths overlap IGNORE_GLOBS: "
+            f"{', '.join(ignored_clash)}"
+        )
+
     (tree / "skunkcrafts_updater_whitelist.txt").write_text("\n".join(whitelist) + "\n")
     (tree / "skunkcrafts_updater_sizeslist.txt").write_text("\n".join(sizes) + "\n")
     (tree / "skunkcrafts_updater_oncelist.txt").write_text("\n".join(oncelist) + "\n")
+    (tree / "skunkcrafts_updater_blacklist.txt").write_text(
+        "\n".join(sorted(LEGACY_PATHS)) + "\n"
+    )
     (tree / "skunkcrafts_updater.cfg").write_text(
         template.replace("@VERSION@", args.version)
     )
 
-    print(f"tracked {len(whitelist)} files, {len(oncelist)} once-only")
+    print(
+        f"tracked {len(whitelist)} files, {len(oncelist)} once-only, "
+        f"{len(LEGACY_PATHS)} blacklisted for deletion"
+    )
     print(f"wrote control files into {tree}")
 
 

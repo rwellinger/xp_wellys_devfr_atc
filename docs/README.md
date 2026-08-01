@@ -150,12 +150,27 @@ work flawlessly. **Local mode also runs on Windows**, with whisper + llama
 on the **Vulkan** ggml backend and the German Piper `de_DE-thorsten` voice,
 at response times comparable to Apple Silicon.
 
-Vulkan rather than CUDA is a deliberate choice: no redistributable DLLs
-have to ship (`vulkan-1.dll` comes with the graphics driver, and X-Plane 12
+Vulkan rather than CUDA is a deliberate choice: no GPU redistributable has
+to ship (`vulkan-1.dll` comes with the graphics driver, and X-Plane 12
 renders through Vulkan on Windows anyway), and it covers AMD and Intel GPUs
 too. The cost is roughly 10–30 % less throughput than CUDA on the same card.
 Where no Vulkan compute device is available — some virtualised cloud-PC
 GPUs — ggml falls back to its CPU backend rather than failing.
+
+That statement is about the *GPU* stack only. The bundle is not free of
+external runtime dependencies: `piper.dll` and `onnxruntime.dll` are built
+against the dynamic CRT and import `MSVCP140.dll` + `VCRUNTIME140.dll` from
+the **Microsoft Visual C++ 2015–2022 Redistributable (x64)**. That is a
+prerequisite on the target machine — we deliberately do not ship those DLLs
+(redistribution terms plus a servicing burden we do not want), and in
+practice X-Plane 12 systems have it already.
+
+The failure mode is worth knowing because it mimics a different bug. Since
+`piper.dll` is delay-loaded, a missing redistributable does **not** stop the
+plugin from loading and does not affect the cloud backends: everything works
+until the first `piper_create`, which then fails with `0xC06D007E`
+(`MOD_NOT_FOUND`) — the very same code you get when the DLL search path is
+wrong. Rule out the redistributable first; it is the cheaper check.
 
 | Resource | Local mode | OpenAI / Mistral cloud mode |
 |---|---|---|

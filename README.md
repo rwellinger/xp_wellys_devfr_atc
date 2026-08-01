@@ -92,12 +92,23 @@ even to pilot mistakes.
   Piper `de_DE-thorsten` voice, with response times comparable to Apple
   Silicon.
 
-  Vulkan rather than CUDA on purpose — no redistributable DLLs to ship,
+  Vulkan rather than CUDA on purpose — no GPU redistributable to ship,
   `vulkan-1.dll` comes with the graphics driver, and it covers AMD/Intel GPUs
   as well. The trade is roughly 10–30 % less throughput than CUDA on the same
   card; note also that the models share VRAM with X-Plane's own Vulkan
   renderer. The artifact ships `piper.dll` + `onnxruntime.dll` alongside the
   `.xpl` (it is not DLL-free); the models download in-sim.
+
+  **Windows prerequisite — Microsoft Visual C++ 2015–2022 Redistributable
+  (x64).** The `.xpl` itself is built with the static CRT and needs nothing,
+  but the bundled `piper.dll` and `onnxruntime.dll` import `MSVCP140.dll` +
+  `VCRUNTIME140.dll`. Most systems already have it (X-Plane 12 and virtually
+  every game installs it), so this rarely bites — but when it does, the
+  failure is easy to misread: because `piper.dll` is delay-loaded, the plugin
+  starts fine and the cloud modes work, and only the **first TTS playback**
+  fails with `0xC06D007E` in `Log.txt`. Same error code as a missing DLL next
+  to the `.xpl`. If you see it, install the redistributable from Microsoft
+  before looking anywhere else.
 
 ## A typical VFR flight, end to end
 

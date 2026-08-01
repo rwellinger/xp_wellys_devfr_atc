@@ -43,6 +43,25 @@ Dinge, die du pro Projekt anpassen musst.
 > der Updater unangetastet. Große, separat heruntergeladene Daten (Modelle,
 > User-Daten) gehören **weder in die whitelist noch in die blacklist** —
 > einfach gar nicht tracken. Die blacklist löscht!
+
+> **Kehrseite derselben Regel — Umbenennungen räumen sich nicht selbst auf.**
+> Genau weil nicht-gewhitelistete Dateien unangetastet bleiben, überlebt eine
+> Datei, die wir früher unter einem anderen Namen ausgeliefert haben, jedes
+> Update. v0.6.0 lieferte `xp_wellys_devfr_atc/mac_x64/xp_wellys_devfr_atc.xpl`,
+> v0.6.1 benannte Ordner **und** Binary um. Der Updater verwaltet das
+> Verzeichnis, in dem die `.cfg` liegt — der Ordnername ist ihm egal —, also
+> zog er brav die neue `.xpl` in den alten Ordner und liess die alte liegen.
+> X-Plane lädt **jede** `.xpl` im Arch-Ordner: zwei Instanzen, gleiche
+> Signature, gleiche Command-Namen. Sichtbares Symptom: die Updater-UI meldet
+> die neue Version, das Plugin-Fenster die alte.
+>
+> Deshalb ist `LEGACY_PATHS` in `generate.py` die **einzige** Quelle der
+> blacklist: exakte Pfade, nie Globs, nie etwas, das einem Nutzer gehören
+> könnte. Der Generator bricht hart ab, wenn ein blacklisteter Pfad zugleich
+> ausgeliefert wird, in der oncelist steht oder unter `IGNORE_GLOBS` fällt.
+> Einträge bleiben dauerhaft stehen — das Löschen einer Datei, die der Client
+> nie hatte, ist ein No-op, und es gibt keinen Zeitpunkt, ab dem man
+> Alt-Installationen ausschliessen kann.
 >
 > **Oncelist-Sonderfall:** Eine user-editierbare Config (`settings.json`)
 > steht **ausschliesslich** in der oncelist — **nie** zusätzlich in
