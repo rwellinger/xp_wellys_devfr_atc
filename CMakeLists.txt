@@ -519,20 +519,22 @@ elseif(WIN32)
             target_link_libraries(xp_wellys_vfr_atc PRIVATE xp_wellys_libs::piper)
         endif()
 
-        # Delay-load piper.dll and vulkan-1.dll. Neither may be a load-time
-        # import, for different reasons:
+        # Delay-load piper.dll and vulkan-1.dll, so neither is mapped for users
+        # who never reach the code path that needs it:
         #
-        #  * piper.dll pulls onnxruntime.dll, whose DllMain FAILS on at least
-        #    one real target (Windows 11, X-Plane 12): ERROR_DLL_INIT_FAILED
-        #    (1114 / NT 0xC0000142). As a load-time import that takes the whole
-        #    .xpl down — X-Plane refuses to load the plugin at all and the user
-        #    loses cloud mode too. Delayed, the failure is contained to the
-        #    first piper call, where the SEH guard in piper_tts.cpp turns it
-        #    into "local TTS unavailable" and the sim keeps running.
-        #    Root cause of the onnxruntime init failure is still open.
-        #  * vulkan-1.dll comes from the graphics driver, not from us. A missing
-        #    or broken loader would likewise stop the .xpl from loading, with no
-        #    in-cockpit diagnostic, even for a user who never runs ggml.
+        #  * piper.dll (and onnxruntime.dll behind it) — only touched once the
+        #    user selects local TTS or the hybrid override (issue #74).
+        #  * vulkan-1.dll comes from the graphics driver, not from us. As a
+        #    load-time import a missing or broken loader would stop the .xpl
+        #    from loading at all, with no in-cockpit diagnostic, even for a user
+        #    who never runs ggml.
+        #
+        # Historical note: this delay-load was briefly blamed for a crash on
+        # Windows and turned into a load-time import, which only made it worse
+        # (X-Plane then refused the plugin outright). The real fault was in
+        # libpiper — a global Ort::Env whose constructor ran under the loader
+        # lock — and is fixed upstream in xp_wellys_libs 0.4.2. Delay-loading
+        # is unproblematic and remains the right default.
         #
         # delayimp provides the thunks.
         target_link_libraries(xp_wellys_vfr_atc PRIVATE delayimp)
