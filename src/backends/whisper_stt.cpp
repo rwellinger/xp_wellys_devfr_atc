@@ -33,7 +33,10 @@ WhisperStt::~WhisperStt() {
 bool WhisperStt::open(const std::string &model_path,
                       const std::string &language) {
   whisper_context_params cparams = whisper_context_default_params();
-  cparams.use_gpu = true; // Metal backend
+  // Whichever GPU backend the prebuilt ggml carries (Metal on macOS, Vulkan on
+  // Windows). ggml falls back to its CPU backend on its own if no device is
+  // usable, so this stays true unconditionally.
+  cparams.use_gpu = true;
   cparams.flash_attn = false;
 
   ctx_ = whisper_init_from_file_with_params(model_path.c_str(), cparams);
@@ -53,7 +56,7 @@ std::string WhisperStt::transcribe(const std::vector<float> &pcm_16k_mono,
                                    const std::string &airport_context) {
   if (!ctx_ || pcm_16k_mono.empty())
     return {};
-  logging::info("[%s][%s] transcribe %zu PCM samples (whisper.cpp, Metal)",
+  logging::info("[%s][%s] transcribe %zu PCM samples (whisper.cpp)",
                 kBackendTag, lang_.c_str(), pcm_16k_mono.size());
 
   whisper_full_params wparams =

@@ -191,7 +191,7 @@ jobs:
   build-windows:
     needs: test # abort the ~15-30 min Windows build if the suite is red
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     # Windows slice is release-bundle work: it runs on release TAGS (the
     # `release` job needs it), on windows_support pushes (feature-branch
     # bring-up) and on workflow_dispatch — but NOT on plain main merges, so a
@@ -245,10 +245,10 @@ jobs:
           Write-Host "Downloading miniaudio v0.11.25..."
           curl.exe -fsSL "https://raw.githubusercontent.com/mackron/miniaudio/0.11.25/miniaudio.h" -o vendor/miniaudio.h
 
-      - name: Download prebuilt Piper bundle (win-x64, hybrid TTS)
-        # The Windows slice is no longer cloud-only: it links the Piper-only
-        # xp_wellys_libs bundle for the local German voice (issue #74). Version
-        # pinned by PREBUILT_LIBS_VERSION, published by the xp_wellys_libs repo.
+      - name: Download prebuilt xp_wellys_libs bundle (win-x64, full)
+        # The Windows slice runs the FULL local stack: whisper + llama (ggml with
+        # the Vulkan GPU backend) + Piper. Version pinned by
+        # PREBUILT_LIBS_VERSION, published by the xp_wellys_libs repo.
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -259,18 +259,40 @@ jobs:
           curl.exe -fsSL $url -o bundle.tar.gz
           tar -xzf bundle.tar.gz -C vendor/prebuilt/xp_wellys_libs
           Remove-Item bundle.tar.gz
+
+          # Verify against the bundle's own manifest, the same way the macOS path
+          # does (Makefile). These are static archives linked straight into the
+          # .xpl, so extracting them unverified is the one place in this build
+          # where a corrupted or swapped download would go unnoticed.
+          $root = "vendor/prebuilt/xp_wellys_libs"
+          $bad = 0
+          foreach ($line in Get-Content "$root/manifest.txt") {
+            if ($line -match '^([0-9a-f]{64})  (.+)$') {
+              $want = $Matches[1]; $file = $Matches[2]
+              $path = Join-Path "$root/lib" $file
+              if (-not (Test-Path $path)) { Write-Host "MISSING $file"; $bad++; continue }
+              $got = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
+              if ($got -ne $want) { Write-Host "SHA256 MISMATCH $file"; $bad++ }
+            }
+          }
+          if ($bad -gt 0) { throw "$bad bundle file(s) failed SHA256 verification" }
+          Write-Host "Bundle SHA256 verification OK"
           Write-Host "--- bundle lib/ ---"
           Get-ChildItem vendor/prebuilt/xp_wellys_libs/lib | Format-Table Name,Length
 
-      - name: Configure (CMake, Ninja + MSVC, hybrid TTS)
+      - name: Configure (CMake, Ninja + MSVC, full local stack)
         shell: pwsh
+        # CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded is not just about vcpkg's
+        # static curl: the bundle's archives are built /MT and xp_wellys_libs.cmake
+        # fails the configure outright if we are not. XPWELLYS_USE_LOCAL_TTS is
+        # forced ON by USE_LOCAL_INFERENCE, but stays explicit for readability.
         run: |
           cmake -B build-win -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
-            -DXPWELLYS_USE_LOCAL_INFERENCE=OFF `
+            -DXPWELLYS_USE_LOCAL_INFERENCE=ON `
             -DXPWELLYS_USE_LOCAL_TTS=ON `
             -DBUILD_TESTS=OFF `
             -Wno-dev
@@ -286,11 +308,13 @@ jobs:
           STAGE=dist/xp_wellys_vfr_atc
           mkdir -p "$STAGE/win_x64" "$STAGE/Resources/espeak-ng-data" "$STAGE/data/atc_profiles/de" "$STAGE/data/atc_profiles/en" "$STAGE/data/vrps" "$STAGE/data/airspaces"
           cp build-win/xp_wellys_vfr_atc.xpl "$STAGE/win_x64/"
-          # Hybrid TTS (issue #74): the Piper runtime DLLs sit next to the .xpl
-          # (Windows loader resolves them there); espeak-ng-data goes under
-          # Resources/ where model_paths::espeakng_data_dir() looks for it. The
-          # de_DE-thorsten voice itself is downloaded in-sim (Models tab), not
-          # shipped. This is why the Windows artifact is no longer DLL-free.
+          # The Piper runtime DLLs sit next to the .xpl (the Windows loader
+          # resolves them there); espeak-ng-data goes under Resources/ where
+          # model_paths::espeakng_data_dir() looks for it. The models themselves
+          # (whisper, llama, the de_DE-thorsten voice) are downloaded in-sim via
+          # the Models tab, not shipped. whisper/llama/ggml are STATIC archives
+          # inside the .xpl and Vulkan needs no redist, so this glob is still
+          # just Piper + onnxruntime — the local stack adds no DLL of its own.
           cp build-win/*.dll "$STAGE/win_x64/"
           cp -r build-win/espeak-ng-data/. "$STAGE/Resources/espeak-ng-data/"
           cp data/atc_prompt_templates.json "$STAGE/data/"

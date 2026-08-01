@@ -790,13 +790,14 @@ void run_worker() {
             "loaded; open the plugin window to download.");
       }
 #else
-      // Cloud-only slice (e.g. x86_64 of the universal binary) but
-      // settings still ask for Local. Surface this clearly — the
-      // user has to switch to OpenAI in Settings.
+      // Cloud-only slice (the x86_64 half of the macOS universal binary) but
+      // settings still ask for Local. Unreachable in practice — the rewrite
+      // above already forced mode to "openai" — but kept so a future build
+      // that drops that rewrite fails loudly instead of silently.
       logging::error(
           "[xp_wellys_vfr_atc] BACKEND MODE: LOCAL requested but this "
-          "build has no local-inference backends. Switch to "
-          "OpenAI in Settings (Apple Silicon required for Local).");
+          "build has no local-inference backends. Switch to OpenAI or "
+          "Mistral in Settings (Local needs Apple Silicon or Windows x64).");
 #endif
     }
 #ifdef XPWELLYS_USE_LOCAL_TTS

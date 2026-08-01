@@ -28,14 +28,15 @@ EN-Profil inert.
 **Triple-Backend-Inferenz** — der Nutzer wählt den Modus zur Laufzeit in
 den Einstellungen:
 
-- **Local** (nur Apple Silicon `arm64`): whisper.cpp `small-q5_1`
-  (multilinguales Metal-STT, Deutsch) + llama.cpp Llama 3.2 3B Instruct
-  Q4_K_M (Metal-LM, nur für die Absichts-Klassifizierung bei geringer
-  Konfidenz) + Piper `de_DE-thorsten-medium` (CPU + onnxruntime TTS) mit
-  gebündelten `espeak-ng-data`. Die Modelle (~2,0 GB) sind NICHT
-  gebündelt — sie werden beim ersten Start in-sim von HuggingFace geladen
-  (HTTPS, fortsetzbar, SHA256-verifiziert) nach
-  `<plugin>/Resources/models/`.
+- **Local** (Apple Silicon `arm64` und Windows `x64`): whisper.cpp
+  `small-q5_1` (multilinguales STT, Deutsch) + llama.cpp Llama 3.2 3B Instruct
+  Q4_K_M (LM, nur für die Absichts-Klassifizierung bei geringer Konfidenz) +
+  Piper `de_DE-thorsten-medium` (CPU + onnxruntime TTS) mit gebündelten
+  `espeak-ng-data`. Das ggml-GPU-Backend steckt im prebuilt Bundle und ist
+  plattformabhängig: **Metal** auf Apple Silicon, **Vulkan** auf Windows (siehe
+  Windows-Slice unten). Die Modelle (~2,0 GB) sind NICHT gebündelt — sie werden
+  beim ersten Start in-sim von HuggingFace geladen (HTTPS, fortsetzbar,
+  SHA256-verifiziert) nach `<plugin>/Resources/models/`.
 - **OpenAI Cloud** (jeder Mac, eigener API-Key): Whisper API (STT) + Chat
   Completions `gpt-4o-mini` JSON-Modus (LM) + TTS API (TTS, sechs
   Stimmen). API-Key im macOS Keychain über `Security.framework` unter dem
@@ -58,22 +59,39 @@ Der `x86_64`-Slice hat **keine** lokalen Backends einkompiliert; **OpenAI**
 oder **Mistral** ist die einzige Option auf Intel-Macs (der Loader
 schreibt `local` → `openai` beim Start für diesen Slice still um).
 
-**Windows-Slice (`win_x64/xp_wellys_vfr_atc.xpl`, Cloud STT/LM + lokales
-Piper-TTS)** — die per-arch `.xpl` MUSS den Plugin-Namen tragen (nicht
-`win.xpl`): X-Plane 12 auf Windows lädt eine generisch benannte Datei still
-nicht. STT/LM bleiben Cloud (OpenAI + Mistral über statisches libcurl aus
-vcpkg, `x64-windows-static`, Schannel-TLS); **TTS ist die lokale Piper-Stimme**
-über das prebuilt `xp_wellys_libs`-**win-x64-Bundle** (Issue #74):
-`XPWELLYS_USE_LOCAL_INFERENCE=OFF` (kein whisper/llama/Metal), aber
-`XPWELLYS_USE_LOCAL_TTS=ON` (Piper + onnxruntime, reines CPU). Gebaut mit MSVC
-(Ninja) via CMake auf `windows-latest` in CI (nicht lokal); das CI holt das
-win-x64-Bundle per `PREBUILT_LIBS_VERSION`. Das Artefakt trägt daher `piper.dll`
-+ `onnxruntime.dll` (+ `onnxruntime_providers_shared.dll`) neben der `.xpl` und
-`espeak-ng-data` unter `Resources/` — **nicht mehr DLL-frei** (bewusster
-Tradeoff für die akzentfreie deutsche Stimme; die `de_DE-thorsten`-Voice lädt
-der Nutzer in-sim im Models-Tab). Der CMake-`elseif(WIN32)`-Zweig
-setzt `IBM=1 APL=0 LIN=0` und linkt `XPLM_64.lib`/`XPWidgets_64.lib` +
-`opengl32 Ws2_32 Crypt32 Bcrypt Advapi32`. Die macOS-`.mm`-Bridges
+**Windows-Slice (`win_x64/xp_wellys_vfr_atc.xpl`, alle drei Backends)** — die
+per-arch `.xpl` MUSS den Plugin-Namen tragen (nicht `win.xpl`): X-Plane 12 auf
+Windows lädt eine generisch benannte Datei still nicht. Die Cloud-Backends
+(OpenAI + Mistral über statisches libcurl aus vcpkg, `x64-windows-static`,
+Schannel-TLS) und der **volle lokale Stack** kommen beide mit:
+`XPWELLYS_USE_LOCAL_INFERENCE=ON` + `XPWELLYS_USE_LOCAL_TTS=ON` gegen das
+prebuilt `xp_wellys_libs`-**win-x64-full-Bundle** (ab v0.4.0) — whisper + llama
+auf **ggml/Vulkan**, Piper-TTS auf CPU.
+
+**Vulkan, nicht CUDA** (bewusst): CUDA-Redist-DLLs (`ggml-cuda` 50–160 MB,
+cuBLAS/cuBLASLt mehrere hundert MB) sind für ein SkunkCrafts-Updater-Release
+untragbar. Vulkan braucht **keine** zusätzliche Runtime-DLL — `vulkan-1.dll`
+kommt vom Grafiktreiber, und X-Plane 12 rendert auf Windows ohnehin über
+Vulkan. Kosten: grob 10–30 % weniger Durchsatz als CUDA, und die Modelle teilen
+sich den VRAM mit X-Planes Renderer. Zwei Delay-Loads schützen den
+Cloud-Nutzer: `/DELAYLOAD:piper.dll` (Piper/onnxruntime erst bei lokaler TTS)
+und `/DELAYLOAD:vulkan-1.dll` (ohne das würde ein fehlender Loader das Laden
+der `.xpl` komplett verhindern — auch für Nutzer, die nie ggml anfassen).
+
+Der `backend_mode` ist eine **Laufzeit**-Einstellung; dasselbe Binary bedient
+Local, OpenAI und Mistral. Gebaut mit MSVC (Ninja) via CMake auf
+`windows-latest` in CI (**nicht lokal** — es gibt keinen lokalen MSVC-Pfad); das
+CI holt das win-x64-Bundle per `PREBUILT_LIBS_VERSION` und verifiziert es gegen
+`manifest.txt` (SHA256). Das Bundle ist mit **statischer CRT (`/MT`)** gebaut,
+deshalb MUSS der Plugin-Build `-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`
+setzen — `xp_wellys_libs.cmake` bricht sonst beim Configure ab. Das Artefakt
+trägt `piper.dll` + `onnxruntime.dll` (+ `onnxruntime_providers_shared.dll`)
+neben der `.xpl` und `espeak-ng-data` unter `Resources/` — **nicht DLL-frei**
+(whisper/llama/ggml sind statisch in der `.xpl`, Vulkan bringt nichts mit; die
+DLLs sind allein Piper/onnxruntime). Modelle (whisper `small-q5_1`, Llama 3B
+Q4, `de_DE-thorsten`) lädt der Nutzer in-sim im Models-Tab. Der
+CMake-`elseif(WIN32)`-Zweig setzt `IBM=1 APL=0 LIN=0` und linkt
+`XPLM_64.lib`/`XPWidgets_64.lib` + `opengl32 Ws2_32 Crypt32 Bcrypt Advapi32`. Die macOS-`.mm`-Bridges
 (`clipboard.mm`, `mic_permission.mm`) sind aus dem Windows-Build
 ausgeschlossen und durch echte `*_win.cpp`-Ports ersetzt (Issue #22):
 `clipboard_win.cpp` liest/schreibt das System-Clipboard über die
@@ -86,10 +104,12 @@ Standard-Mic nativ → 16 kHz mono s16 in denselben `buffer_`; der macOS-
 Core-Audio-Pfad bleibt unangetastet. miniaudio (`vendor/miniaudio.h`, von
 `make setup` / dem CI-Deps-Step geholt) braucht **keine** Extra-Link-Libs —
 ole32/WASAPI werden zur Laufzeit dynamisch geladen; `MINIAUDIO_IMPLEMENTATION`
-lebt allein in `audio_recorder.cpp`. Die pthread-QoS-Hints (`manager`) sind
-auf Nicht-Apple weiterhin Stub (echter Windows-Thread-Priority-Port: Issue
-#23) — harmlos, da der Slice kein whisper/llama-Local-Inference fährt (nur die
-leichte CPU-Piper-TTS). Siehe Epic #24.
+lebt allein in `audio_recorder.cpp`. Die Worker-Priorisierung (`manager`) ist
+jetzt auf beiden Plattformen echt: `pthread_set_qos_class_self_np(UTILITY)` auf
+Apple, `SetThreadPriority(THREAD_PRIORITY_BELOW_NORMAL)` auf Windows (Issue
+#23) — der frühere No-op war damit begründet, dass der Slice kein
+Local-Inference fuhr; mit whisper/llama auf Vulkan konkurrieren die Worker nun
+real mit X-Planes Renderer. Siehe Epic #24.
 
 Alle drei Backend-Familien teilen sich dieselben drei abstrakten
 `i_*.hpp`-Strategie-Interfaces. Engine-Code berührt nie ein konkretes

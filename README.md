@@ -78,18 +78,19 @@ even to pilot mistakes.
   > **For accurate German, use Local mode** (Piper `de_DE-thorsten`, a native
   > German voice). Both cloud providers speak German with an accent — see
   > issue #63.
-- **🪟 Windows (cloud STT/LM + local German Piper voice, fully supported)** —
-  X-Plane 12 on Windows is included (`win_x64/xp_wellys_vfr_atc.xpl`, OpenAI
-  **or** Mistral, API key in the Windows Credential Manager). **Verified
-  end-to-end on real Windows 11 hardware** (Shadow cloud PC, Windows 11,
-  NVIDIA GPU): a complete VFR round trip out of **Friedrichshafen (EDNY)** —
-  plugin loading, microphone/PTT, the full STT→ATC→TTS pipeline and the API
-  key in the Credential Manager all work flawlessly. Full local STT/LM
-  (whisper/llama, Metal) is **not** available on Windows, but the local Piper
-  **TTS** voice now is: enable the hybrid TTS toggle to speak with the
-  accent-free German `de_DE-thorsten` voice while STT/LM stay on the cloud
-  (issue #74) — the artifact ships `piper.dll` + `onnxruntime.dll` alongside
-  the `.xpl` (no longer DLL-free) and the voice downloads in-sim.
+- **🪟 Windows (all three backends, fully supported)** — X-Plane 12 on Windows
+  is included (`win_x64/xp_wellys_vfr_atc.xpl`). The cloud modes (OpenAI **or**
+  Mistral, API key in the Windows Credential Manager) are **verified end to end
+  on real Windows 11 hardware** (Shadow cloud PC, NVIDIA GPU): a complete VFR
+  round trip out of **Friedrichshafen (EDNY)** — plugin loading,
+  microphone/PTT, the full STT→ATC→TTS pipeline and the Credential Manager all
+  work flawlessly. **Local mode now builds for Windows too**, with whisper +
+  llama on the **Vulkan** GPU backend (never CUDA — no redist DLLs;
+  `vulkan-1.dll` comes with the graphics driver) and the accent-free German
+  Piper `de_DE-thorsten` voice. Expect roughly 10–30 % less throughput than
+  CUDA on the same card, and note that the models share VRAM with X-Plane's own
+  Vulkan renderer. The artifact ships `piper.dll` + `onnxruntime.dll` alongside
+  the `.xpl` (no longer DLL-free); the models download in-sim.
 
 ## A typical VFR flight, end to end
 
@@ -135,12 +136,13 @@ from BZF holders are expressly welcome.
 - **German & English, no FR/IT** — VFR phraseology comes as a German
   (NfL/BZF, default) and an English (ICAO) profile. Further languages — such
   as French or Italian for western Switzerland or Ticino — are not planned.
-- **Local mode on Apple Silicon only** — Intel Macs can use the plugin, but
-  only in cloud mode (OpenAI or Mistral, API key required).
-- **No local offline AI on Windows** — the Windows build is fully supported
-  and verified on real Windows 11 hardware, but runs exclusively in cloud
-  mode (OpenAI or Mistral, API key required); local models need Apple
-  Silicon / Metal.
+- **No local mode on Intel Macs** — they can use the plugin, but only in cloud
+  mode (OpenAI or Mistral, API key required). Local mode runs on Apple Silicon
+  (Metal) and Windows x64 (Vulkan).
+- **Windows local mode is new and less proven** — it builds and links in CI,
+  but has far fewer flight hours than the macOS path, and Vulkan compute is not
+  guaranteed on virtualised GPUs (some cloud-PC vGPU profiles). Cloud mode
+  remains the verified Windows configuration.
 - **Not modeled yet** — wake-turbulence separation, freely selectable taxi
   routes (currently always "via Alpha"), large hub airports (LSZH, LSGG …)
   with a delivery workflow, and a virtual co-pilot / checklist reader.

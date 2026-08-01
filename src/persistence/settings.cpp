@@ -23,6 +23,7 @@
 #include "persistence/keychain.hpp"
 #include "persistence/models_catalog.hpp"
 
+#include <algorithm> // std::max (path separator search)
 #include <cctype>
 #include <fstream>
 #include <string>
@@ -156,10 +157,25 @@ void init() {
   }
 #endif
 
-  // Strip filename → directory, then strip platform dir (mac_x64/)
-  auto pos = path_str.rfind('/');
-  if (pos != std::string::npos) {
-    pos = path_str.rfind('/', pos - 1);
+  // Strip filename → directory, then strip platform dir (mac_x64/, win_x64/).
+  // XPLM_USE_NATIVE_PATHS yields OS-native separators, so accept both '/' and
+  // '\': X-Plane on Windows reports backslash paths. Without the backslash arm
+  // this fell through to the relative "data" fallback on Windows, so every
+  // data/ lookup (settings.json, models_catalog.json with the model URLs and
+  // SHA256 hashes, the atc_profiles bundles) resolved against the process CWD
+  // instead of the plugin. Same fix model_paths.cpp already carries (#74).
+  auto rfind_sep = [&](size_t from) {
+    size_t a = path_str.rfind('/', from);
+    size_t b = path_str.rfind('\\', from);
+    if (a == std::string::npos)
+      return b;
+    if (b == std::string::npos)
+      return a;
+    return std::max(a, b);
+  };
+  auto pos = rfind_sep(std::string::npos);
+  if (pos != std::string::npos && pos > 0) {
+    pos = rfind_sep(pos - 1);
   }
   if (pos != std::string::npos) {
     data_dir_path = path_str.substr(0, pos) + "/data";
