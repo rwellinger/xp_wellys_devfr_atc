@@ -439,10 +439,27 @@ jobs:
 
           cd dist && zip -r xp_wellys_vfr_atc.zip xp_wellys_vfr_atc/
 
+      - name: Locate hand-written release notes
+        id: notes
+        # docs/release-notes/<tag>.md, if present, becomes the body; the
+        # auto-generated commit list is appended below it. Absent is fine and
+        # deliberately NOT an error — a hotfix tag does not need prose — but it
+        # is logged, because a typo in the filename would otherwise silently
+        # publish a release with nothing but a commit list.
+        run: |
+          f="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then
+            echo "using $f"
+            echo "path=$f" >> "$GITHUB_OUTPUT"
+          else
+            echo "no $f — publishing with auto-generated notes only"
+          fi
+
       - name: Create release with assets
         uses: softprops/action-gh-release@v2
         with:
           files: dist/xp_wellys_vfr_atc.zip
+          body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
 
       - name: Publish SkunkCrafts update tree
