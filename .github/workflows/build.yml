@@ -206,8 +206,10 @@ jobs:
     if: (github.event_name == 'push' && github.ref != 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v5
-        # No submodules: cloud-only build pulls in none of the local
-        # inference third-party trees.
+        # No submodules: the local inference stack comes from the prebuilt
+        # xp_wellys_libs bundle (downloaded + SHA256-verified below), not from
+        # third-party source trees. (This used to say "cloud-only build" —
+        # true before the Vulkan work, wrong since.)
 
       - name: Set up MSVC developer environment
         # Puts cl.exe + the Windows SDK on PATH so CMake's Ninja generator
