@@ -1,0 +1,20 @@
+---
+description: C++17 coding conventions for the plugin and engine
+globs: "**/*.{cpp,hpp,h,mm}"
+alwaysApply: false
+---
+
+# Coding conventions
+
+- C++17; catch exceptions at the plugin boundary (`main.cpp`) — none across the X-Plane boundary
+- No exceptions in destructors
+- X-Plane API **only** on the main thread
+- Inference / network / heavy work on `std::thread` + `std::atomic` status
+- Logging: `XPLMDebugString` → Log.txt — **ASCII only** (0x20–0x7E); UTF-8 becomes `?` in Log + ImGui
+- JSON: `nlohmann::json`
+- Self-contained module headers; no circular includes
+- Includes with subdir prefix: `#include "backends/whisper_stt.hpp"`
+- Prefer `make format` / `make lint` / `make` over ad-hoc toolchains
+- Shallow nesting: early returns and helpers over deep `if`/`switch`
+- Clean code: readable names, small functions, no speculative abstractions
+- Engine OBJECT lib (`xp_atc_engine`) must stay SDK-free — any TU that includes `<XPLM*.h>` belongs in the plugin module

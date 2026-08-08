@@ -1,0 +1,17 @@
+---
+description: Windows win_x64 load-time pitfalls — do not simplify
+globs: "{**/loader.cpp,**/CMakeLists.txt,**/*_win.cpp,**/audio_recorder.cpp,cmake/**,*.cmake}"
+alwaysApply: false
+---
+
+# Windows slice pitfalls (load-bearing)
+
+Artifact: `win_x64/xp_wellys_vfr_atc.xpl` (plugin name required). Vulkan for ggml (not CUDA). Piper/ORT as DLLs beside `.xpl`.
+
+## Do not "simplify"
+
+1. Keep `/DELAYLOAD:piper.dll` + `/DELAYLOAD:vulkan-1.dll`. Load-time Piper import → X-Plane Error 1114 (whole plugin refuses to load).
+2. Keep `loader.cpp::preload_piper_dll()` via `LoadLibraryExW` + `LOAD_WITH_ALTERED_SEARCH_PATH` from the module path (`GetModuleFileNameW`). Delay-load helper does **not** search `win_x64/`. Without preload: `0xC06D007E` on first `piper_create`.
+3. Bundle needs `piper-lazy-ort-env.patch` (`Ort::Env` as function-local static) — namespace-level ctor under loader lock → `0xC0000005`.
+
+Build: CI MSVC only; `/MT` mandatory. Mic: miniaudio/WASAPI in `audio_recorder.cpp`. Clipboard/mic permission: `*_win.cpp` ports, not `.mm`.

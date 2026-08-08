@@ -1,0 +1,22 @@
+---
+description: Make/CMake build, Universal Binary, and local inference flags
+globs: "{Makefile,CMakeLists.txt,cmake/**,*.cmake,PREBUILT_LIBS_VERSION}"
+alwaysApply: false
+---
+
+# Build system
+
+```bash
+make setup | build | install | all | repl | test | sanitize
+```
+
+- CMake 3.26+, C++17, macOS 13.3+
+- `make build` = two CMake runs + `lipo`:
+  - **arm64**: `XPWELLYS_USE_LOCAL_INFERENCE=ON` → `build-arm64/`
+  - **x86_64**: `XPWELLYS_USE_LOCAL_INFERENCE=OFF` → `build-x86_64/`
+  - Output: `build/xp_wellys_vfr_atc.xpl` (+ arm64 `libpiper` / `libonnxruntime` staged)
+- Windows builds in CI only (MSVC Ninja); needs `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` (`/MT`)
+- Windows artifact name must be `win_x64/xp_wellys_vfr_atc.xpl` (not `win.xpl`)
+- Local backends must not use libcurl; curl is for downloader + cloud clients
+- Vendor (`sdk/`, `vendor/`, spike third_party) via `make setup` — never commit those trees
+- `make sanitize` instruments engine only — not the live `.xpl` in X-Plane

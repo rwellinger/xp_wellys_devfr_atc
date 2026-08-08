@@ -1,0 +1,27 @@
+---
+description: ATC engine, state machine, and profile data conventions
+globs: src/atc/**/*.{cpp,hpp},data/atc_profiles/**/*
+alwaysApply: false
+---
+
+# ATC engine
+
+SDK-free modules under `src/atc/` (+ `flows/`). Plugin-only: `atc_session` (PTT coordinator).
+
+## Pipeline
+
+Transcript → `intent_parser` (rules) → if confidence < 0.7 → `backends::lm()` → `atc_state_machine` → template response → TTS via `backends::tts()`.
+
+## Profiles
+
+- `data/atc_profiles/de/` — NfL DACH-VFR; BZF-strict / conformance active when `atc_profile()=="DE"`
+- `data/atc_profiles/en/` — ICAO VFR (Doc 4444 / Annex 10 / SERA); strict hooks inert
+- Templates / rules / hints / ui_strings / conformance are data-driven — prefer editing JSON over hardcoding
+
+## Conformance (DE)
+
+`initial_call_conformance` loads `conformance.json`: `required` vs `recommended`. Strict mode uses union. H2: phraseology hint must match `recommended` (enforced in tests). "ERBITTE ROLLEN" belongs to `REQUEST_TAXI`, not the initial-call hint.
+
+## State sketch
+
+`IDLE` → ground/tower/pattern/landing/en-route/UNICOM. Controlled = GROUND/TOWER flow; uncontrolled = `UNICOM_ACTIVE` (announce only). See `CLAUDE.md` for the full transition graph.

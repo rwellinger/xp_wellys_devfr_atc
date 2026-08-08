@@ -1,0 +1,23 @@
+---
+description: Catch2 test isolation and audit invariants
+globs: tests/**/*
+alwaysApply: false
+---
+
+# Tests
+
+`make test` → Catch2 `--order rand --rng-seed 42`.
+
+## Isolation
+
+`tests/module_reset_listener.cpp` resets module globals **before every** test case (`atc_state_machine`, `flight_phase`, `atis_generator`, `settings::reset_for_test`, …). There is no single global reset — modules own their state.
+
+## Rules for new tests
+
+- Do **not** assume `flight_phase` is unloaded
+- Always set a realistic `frequency_type` (UNKNOWN can trip wrong-frequency guards depending on load order)
+- Hunt order-dependent bugs with other seeds, e.g. `./build/xp_wellys_vfr_atc_tests --order rand --rng-seed 7`
+
+## Audit
+
+`tests/test_audit_logging.cpp` greps backend `.cpp` files for cross-family includes and wrong audit tags — treat failures as hard CI breaks, not flaky noise.

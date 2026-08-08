@@ -1,0 +1,20 @@
+---
+description: Local / OpenAI / Mistral backend implementation notes
+globs: src/backends/**/*.{cpp,hpp}
+alwaysApply: false
+---
+
+# Backends
+
+Three families, one set of `i_*.hpp` interfaces. `manager` = SDK-free thread dispatch. `loader` = plugin-only bring-up. `downloader` = HF model fetch (local only).
+
+| Mode | STT | LM | TTS | Notes |
+|------|-----|----|-----|-------|
+| local | whisper.cpp | llama.cpp | Piper | arm64 + Win; gated `XPWELLYS_USE_LOCAL_INFERENCE` |
+| openai | Whisper API | gpt-4o-mini JSON | TTS API | Keychain `...openai` |
+| mistral | Voxtral STT | mistral-small JSON | Voxtral TTS | Keychain `...mistral`; TTS returns JSON+base64 WAV |
+
+- LM only when intent confidence < 0.7
+- x86_64: no local symbols; loader remaps `local` → `openai`
+- Mistral German speech: no DE preset voice (Issue #63); clean DE = Local/Piper
+- Never put API keys in settings; truncate keys in logs to last 4 chars
