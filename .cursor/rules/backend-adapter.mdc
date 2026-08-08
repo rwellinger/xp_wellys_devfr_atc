@@ -1,0 +1,33 @@
+---
+description: Hard Backend Adapter Rule — strategy interfaces and audit tags
+globs: src/backends/**/*.{cpp,hpp},src/atc/**/*.{cpp,hpp},src/core/**/*.{cpp,hpp}
+alwaysApply: false
+---
+
+# Backend Adapter Rule (CI-enforced)
+
+Engine code talks **only** to:
+
+- `backends/i_speech_to_text.hpp`
+- `backends/i_language_model.hpp`
+- `backends/i_text_to_speech.hpp`
+
+Mode selection: **only** `backends/loader.cpp::run_worker()`.
+
+If you want to branch on `backend_mode` from engine code → the interface is missing an abstraction. Add it there instead.
+
+## Extend a backend feature
+
+1. Extend the relevant `i_*.hpp`
+2. Implement in **all three** families: Local + OpenAI + Mistral
+3. Emit `[STT|LM|TTS]-[LOCAL|OPENAI|MISTRAL]` on every inference call
+
+## Audit invariants (`tests/test_audit_logging.cpp`)
+
+| Files | Must have | Must NOT contain |
+|-------|-----------|------------------|
+| `whisper_stt` / `llama_lm` / `piper_tts` | `*-LOCAL` | `OPENAI`, `MISTRAL`, `api.openai.com`, `api.mistral.ai`, `curl_easy_perform` |
+| `openai_*` | `*-OPENAI` | `whisper.h`, `llama.h`, `piper.h`, `-LOCAL]`, `-MISTRAL]` |
+| `mistral_*` | `*-MISTRAL` | `whisper.h`, `llama.h`, `piper.h`, `-LOCAL]`, `-OPENAI]`, `api.openai.com` |
+
+Local backend headers: `#include` only inside `#ifdef XPWELLYS_USE_LOCAL_INFERENCE` — sole consumer is `loader.cpp`. Local backends must not use libcurl.

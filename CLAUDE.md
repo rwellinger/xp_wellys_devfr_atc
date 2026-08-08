@@ -1,8 +1,13 @@
 # CLAUDE.md
 
-Diese Datei gibt Claude Code dauerhafte Leitlinien für die Arbeit in
-diesem Repository. Lies sie vollständig, bevor du irgendetwas anderes
-tust.
+Diese Datei ist die **ausführliche** Projekt-Leitlinie (Architektur, Module,
+Settings, Windows-Fallen). Für Cursor gilt zusätzlich:
+
+- **[AGENTS.md](AGENTS.md)** — kurzer Agent-Einstieg
+- **[.cursor/rules/](.cursor/rules/)** — fokussierte, path-/always-on Rules
+
+Lies die relevanten Abschnitte hier, bevor du Architektur oder Backends änderst.
+Bei Widerspruch zwischen Kurzregeln und diesem Dokument gilt **CLAUDE.md**.
 
 ---
 

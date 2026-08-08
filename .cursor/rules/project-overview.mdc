@@ -1,0 +1,25 @@
+---
+description: Project overview and non-negotiable invariants for xp_wellys_vfr_atc
+alwaysApply: true
+---
+
+# xp_wellys_vfr_atc
+
+C++17 X-Plane 12 VFR-ATC plugin (macOS Universal + Windows). German NfL DACH-VFR + English ICAO-VFR. No IFR.
+
+- Language switch: `settings::atc_language()` `"de"`|`"en"` → profile `DE`|`EN` → `data/atc_profiles/{de,en}/`
+- Backends (runtime): `local` | `openai` | `mistral` — mode only in `backends/loader.cpp`
+- Full detail: `CLAUDE.md`. Short brief: `AGENTS.md`
+
+## Do not break
+
+- Engine uses only `i_speech_to_text` / `i_language_model` / `i_text_to_speech`
+- Never branch on `settings::backend_mode()` outside `loader.cpp`
+- `xp_atc_engine` stays SDK-free (no `<XPLM*.h>`)
+- X-Plane API on main thread only; heavy work on worker threads
+- No API keys in `settings.json`; Keychain only; log last 4 chars
+- Keep legacy IDs: `com.xp_wellys_devfr_atc.*`, `ch.thWelly.wellys_devfr_atc`, `xp_wellys_devfr_atc/*` commands/prefs
+
+## Workflow
+
+Prefer `make setup|build|test|all|repl|sanitize`. Do not invent abstractions beyond existing style.
