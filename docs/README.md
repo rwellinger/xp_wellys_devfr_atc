@@ -769,6 +769,14 @@ exam questions, NfL Teil B) and the coverage matrix are under
 
 ## FAQ
 
+**Local TTS fails on Windows with `0xC06D007E` — plugin loads, cloud works?**
+Almost always a missing **Microsoft Visual C++ 2015–2022 Redistributable
+(x64)**. `piper.dll` is delay-loaded, so the plugin starts and cloud modes
+keep working; the first Local TTS call then fails with the same code as a
+missing DLL beside the `.xpl`. Install the redistributable from Microsoft
+before debugging paths. Full context:
+[Hardware requirements](#hardware-requirements).
+
 **Does the plugin support IFR or flight planning?**
 No — this plugin is VFR-only. No IFR clearances, no flight-plan filing, no
 FMS/routing integration. IFR is a separate product with its own plugin:
